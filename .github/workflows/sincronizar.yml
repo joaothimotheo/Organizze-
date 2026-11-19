@@ -1,0 +1,61 @@
+name: Sincronizar banco
+
+# Algumas vezes por dia, pede ao sistema publicado para buscar o que a Pluggy já tem.
+# O MeuPluggy lê os bancos sozinho a cada 24 h (o horário anda um pouco a cada dia, hoje perto das 16h);
+# só ler várias vezes garante que o app pegue a renovação pouco depois dela. Só leitura, sem custo.
+# Precisa dos segredos do repositório (Settings → Secrets and variables → Actions):
+#   FINANCEIRO_URL         ex.: https://seu-financeiro.onrender.com
+#   FINANCEIRO_TOKEN_SYNC  o mesmo valor configurado no Render
+on:
+  schedule:
+    - cron: "0 11 * * *" # 08h00 em Brasília
+    - cron: "0 15 * * *" # 12h00
+    - cron: "30 19 * * *" # 16h30
+    - cron: "0 22 * * *" # 19h00
+    - cron: "0 1 * * *" # 22h00
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  sincronizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Acorda o serviço e sincroniza
+        env:
+          URL: ${{ secrets.FINANCEIRO_URL }}
+          TOKEN: ${{ secrets.FINANCEIRO_TOKEN_SYNC }}
+        run: |
+          set -euo pipefail
+          if [ -z "${URL}" ] || [ -z "${TOKEN}" ]; then
+            # Sem os segredos (repositório recém-copiado, ou quem só roda no computador): não faz nada.
+            echo "::notice::Sincronização agendada desligada: defina os segredos FINANCEIRO_URL e FINANCEIRO_TOKEN_SYNC para ligar."
+            exit 0
+          fi
+          URL="${URL%/}"
+          # O plano grátis do Render dorme; o primeiro acesso pode levar cerca de 1 minuto.
+          for i in $(seq 1 12); do
+            if curl -fsS --max-time 30 "${URL}/api/saude" > /dev/null; then break; fi
+            echo "aguardando o serviço acordar (${i}/12)…"
+            sleep 10
+          done
+          codigo=$(curl -sS --max-time 300 -o resposta.json -w '%{http_code}' -X POST "${URL}/api/sincronizar" \
+            -H "Authorization: Bearer ${TOKEN}" -H "x-financeiro: 1")
+          echo "HTTP ${codigo}"
+          # Resumo sem valores nem descrições: só contagens por conta.
+          python3 - <<'PY'
+          import json
+          try:
+              r = json.load(open("resposta.json"))
+          except Exception:
+              print("resposta não é JSON"); raise SystemExit(0)
+          if "erro" in r:
+              print("erro:", r["erro"])
+          for c in r.get("contas", []):
+              print("-", c.get("conta"), c.get("contagem") or c.get("situacao"))
+          con = r.get("conexao") or {}
+          if con:
+              print("conexão:", con.get("status"), "| consentimento até:", con.get("consentimento_ate"))
+          PY
+          [ "${codigo}" = "200" ]

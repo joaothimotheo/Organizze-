@@ -1,0 +1,14 @@
+.git
+dados
+documentos
+**/node_modules
+frontend/dist
+backend/target
+*.pdf
+*.ofx
+*.csv
+*.xls
+*.xlsx
+.env
+.env.*
+!.env.example

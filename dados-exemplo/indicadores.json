@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "atualizado_em": null,
+  "series": {
+    "selic_meta_aa": {
+      "sgs": 432,
+      "unidade": "% a.a.",
+      "fonte": "BCB/SGS 432",
+      "registros": []
+    },
+    "cdi_aa": {
+      "sgs": 4389,
+      "unidade": "% a.a. (base 252)",
+      "fonte": "BCB/SGS 4389",
+      "registros": []
+    },
+    "cdi_dia": {
+      "sgs": 12,
+      "unidade": "% a.d.",
+      "fonte": "BCB/SGS 12",
+      "registros": []
+    },
+    "selic_dia": {
+      "sgs": 11,
+      "unidade": "% a.d.",
+      "fonte": "BCB/SGS 11",
+      "registros": []
+    }
+  }
+}

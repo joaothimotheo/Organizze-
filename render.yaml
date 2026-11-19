@@ -1,0 +1,87 @@
+# Blueprint do Render: um serviço web gratuito com a imagem do Dockerfile.
+# Os dados ficam no Postgres do Neon (DATABASE_URL), não no disco do Render.
+# Ao usar no seu repositório: troque os dois `name:` por nomes seus e o VITE_API_URL pelo seu domínio
+# (ou apague o serviço do site estático se não for usar domínio próprio). Passo a passo em PUBLICAR.md.
+services:
+  - type: web
+    name: financeiro
+    runtime: docker
+    plan: free
+    region: virginia
+    healthCheckPath: /api/saude
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      # Login com Google (credencial OAuth do Google Cloud) e o único e-mail aceito.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: FINANCEIRO_EMAIL
+        sync: false
+      # Sincronização com o banco (Pluggy / MeuPluggy) e token do agendamento diário.
+      - key: PLUGGY_CLIENT_ID
+        sync: false
+      - key: PLUGGY_CLIENT_SECRET
+        sync: false
+      - key: PLUGGY_ITEM_ID
+        sync: false
+      - key: FINANCEIRO_TOKEN_SYNC
+        sync: false
+      # Login por senha: opcional com o Google (acesso de emergência). Pode deixar em branco.
+      - key: FINANCEIRO_USUARIO
+        sync: false
+      - key: FINANCEIRO_SENHA
+        sync: false
+      - key: FINANCEIRO_SEGREDO
+        generateValue: true
+      # Telas num site separado (abaixo). Preencha no painel só depois do DNS e do Google prontos
+      # (passo a passo em PUBLICAR.md); vazias, tudo continua num serviço só, como antes.
+      # FINANCEIRO_URL_APP = https://app.seudominio.com.br (para onde o login volta; libera o CORS)
+      - key: FINANCEIRO_URL_APP
+        sync: false
+      # FINANCEIRO_URL_PUBLICA = https://api.seudominio.com.br (o retorno do Google é <isto>/api/auth/google/retorno)
+      - key: FINANCEIRO_URL_PUBLICA
+        sync: false
+
+  # Site estático com as telas: grátis e não dorme, então a tela "Estamos carregando seus dados"
+  # aparece na hora enquanto a API acorda. Domínio: app.seudominio.com.br.
+  - type: web
+    name: financeiro-site
+    runtime: static
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: ./frontend/dist
+    pullRequestPreviewsEnabled: false
+    envVars:
+      - key: VITE_API_URL
+        value: https://api.seudominio.com.br
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: no-referrer
+      - path: /
+        name: Cache-Control
+        value: no-cache
+      - path: /index.html
+        name: Cache-Control
+        value: no-cache
+      - path: /sw.js
+        name: Cache-Control
+        value: no-cache
+      - path: /manifest.webmanifest
+        name: Cache-Control
+        value: no-cache
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
