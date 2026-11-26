@@ -22,7 +22,7 @@ import {
   type Periodo,
 } from "../analises";
 import { GraficoAcimaDaMedia, GraficoCascata, GraficoFuturas, GraficoPatrimonioPeriodo, GraficoSobra } from "../componentes/Graficos";
-import { hojeISO, MESES, reais } from "../formato";
+import { addMes, hojeISO, MESES, reais } from "../formato";
 import { destinoPendentes } from "../navegacao";
 
 /** "AAAA-MM-DD" → "dd/mm" */
@@ -116,6 +116,11 @@ export default function Analises({ brutos, visao, ano, mes }: { brutos: Brutos; 
           ))}
         </div>
       </div>
+
+      <a className="an-fechamento panel" href={`#fechamento/${addMes(hojeISO().slice(0, 7), -1)}`}>
+        <b>Fechamento do mês</b>
+        <span>O resumo de {nomeMes(addMes(hojeISO().slice(0, 7), -1))}, com opção de guardar em PDF.</span>
+      </a>
 
       <div className="an-grade">
         <Pergunta titulo="Vou fechar o mês no azul?" frase={fraseFechamento(fech)}>

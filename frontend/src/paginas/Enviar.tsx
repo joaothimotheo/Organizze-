@@ -1,10 +1,12 @@
 import { useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { api, urlApi, type Brutos, type ContaCadastrada, type Fonte, type Previa, type ResultadoImportacao } from "../api";
+import Avisos from "../componentes/Avisos";
 import { Painel, Vazio } from "../componentes/Indicador";
 import { SeletorCategoria } from "../componentes/SeletorCategoria";
 import { BuscarHistorico } from "../componentes/Sincronizacao";
 import { data, mesAno, nomeCategoria, opcoesCategoria, reais, rotuloFora } from "../formato";
 import { tipoDaNatureza } from "../grupos";
+import { instituicaoUtil } from "../movimentos";
 
 type Item =
   | { estado: "lendo"; chave: string; nome: string }
@@ -260,7 +262,7 @@ function SemCategoria({ brutos, aoMudar }: { brutos: Brutos; aoMudar: () => Prom
 
 /** Nome de uma conta como aparece em Ajustes (banco · apelido · final). */
 export const nomeConta = (c: ContaCadastrada) =>
-  [c.instituicao && !c.instituicao.includes("Pluggy") ? c.instituicao : null, c.apelido, c.final ? `final ${c.final}` : null].filter(Boolean).join(" · ") || c.id;
+  [instituicaoUtil(c), c.apelido, c.final ? `final ${c.final}` : null].filter(Boolean).join(" · ") || c.id;
 
 /** Escolha, por conta corrente, se é do dia a dia ou a reserva de emergência. */
 function PapelContas({ brutos, aoMudar }: { brutos: Brutos; aoMudar: () => Promise<void> }) {
@@ -367,6 +369,8 @@ export default function Enviar({
       <Painel titulo="Aparência e dados" descricao="Preferências deste aparelho.">
         {preferencias}
       </Painel>
+
+      <Avisos />
 
       <Painel titulo="Lançamentos sem categoria" descricao="Escolha a categoria; o sistema aprende para as próximas importações.">
         <SemCategoria brutos={brutos} aoMudar={aoMudar} />

@@ -51,6 +51,9 @@ ok(nomes(MENU_PRINCIPAL) === "inicio,movimentos,dividas,objetivos,analises", "me
 ok(nomes(MENU_ORGANIZAR) === "fixas,pessoas", "menu organizar");
 ok(nomes(MENU_FIM) === "categorias,salarios,ajustes", "menu fim");
 ok(nomes(MENU_MAIS) === "dividas,analises,fixas,pessoas,categorias,ajustes,salarios", "menu mais");
+ok(JSON.stringify(telaDoEndereco("#fechamento/2026-10")) === JSON.stringify({ tela: "fechamento", detalhe: "2026-10" }), "fechamento/AAAA-MM");
+ok(enderecoCanonico("#fechamento/2026-10") === null, "fechamento é endereço canônico");
+ok(abaDoCelular("fechamento") === "mais", "fechamento acende Mais no celular");
 
 if (falhas) {
   console.error(`${falhas} falha(s)`);

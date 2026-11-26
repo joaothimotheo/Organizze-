@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, idsReserva, SemSessao, type Brutos, type EstadoSync, type Grupo, type Movimentacao, type VisaoGeral as Visao } from "../api";
 import {
+  faturaDoMes,
+  faturasDoBanco,
+  melhorDiaDeCompra,
   fechamento,
   fraseFechamento,
   fraseNaoComecou,
@@ -17,7 +20,10 @@ import {
   sobraPorMes,
 } from "../analises";
 import { gastoPorParte } from "../gastos";
-import { addMes, data, hojeISO, nomeCategoria, numero, reais } from "../formato";
+import { GraficoPrevisao } from "../componentes/Graficos";
+import { previsao } from "../previsao";
+import { categoriasLimitaveis, limitesDoMes, type LinhaLimite } from "../orcamento";
+import { addMes, data, hojeISO, lerValor, MESES, nomeCategoria, numero, reais } from "../formato";
 
 const compDe = (m: Movimentacao) => m.competencia ?? m.data.slice(0, 7);
 const semGrupo = (c: string) => !c || c === "a_classificar";
@@ -51,11 +57,21 @@ export function situacaoAgora(visao: Visao, sync: EstadoSync | null, reservas: S
   return { correntes, cartoes, pat, quando, saldo, cartao, usoPct, vence, contasReserva, reserva };
 }
 
-function Agora({ visao, sync, reservas }: { visao: Visao; sync: EstadoSync | null; reservas: Set<string> }) {
+function Agora({ visao, brutos, sync, reservas, hoje }: { visao: Visao; brutos: Brutos; sync: EstadoSync | null; reservas: Set<string>; hoje: string }) {
   const { correntes, cartoes, pat, quando, saldo, cartao, usoPct, vence, contasReserva, reserva } = situacaoAgora(visao, sync, reservas);
+  const mesHoje = hoje.slice(0, 7);
+  const fatura = useMemo(() => faturaDoMes(brutos, mesHoje), [brutos, mesHoje]);
+  const banco = useMemo(() => faturasDoBanco(cartao?.faturas, brutos.movimentacoes, cartao?.conta_id, hoje), [cartao, brutos.movimentacoes, hoje]);
+  const ultima = banco?.ultima;
+  const melhor = melhorDiaDeCompra(banco?.proximoFechamento, vence, hoje);
+  // Diferença entre o banco e os nossos lançamentos daquela fatura (compras que mudaram de fatura, por exemplo).
+  const diferenca = ultima && Math.abs(ultima.total - ultima.lancamentos) >= 1 ? ultima.lancamentos : null;
+  const comFatura = fatura !== null || !!cartao;
+  const itens = 3 + (reserva !== null ? 1 : 0) + (comFatura ? 1 : 0);
+  const classe = itens === 5 ? " cinco" : itens === 4 ? " quatro" : "";
 
   return (
-    <section className={"agora" + (reserva !== null ? " quatro" : "")} aria-label="Situação agora">
+    <section className={"agora" + classe} aria-label="Situação agora">
       <div className="agora-item">
         <span className="rot">Saldo na conta</span>
         <strong className={"num grande" + (saldo !== null && saldo < 0 ? " neg" : "")}>{saldo === null ? "Sem dados" : reais(saldo)}</strong>
@@ -85,6 +101,41 @@ function Agora({ visao, sync, reservas }: { visao: Visao; sync: EstadoSync | nul
           {cartoes.length > 1 && ` (+${cartoes.length - 1} cartão)`}
         </span>
       </div>
+      {comFatura && (
+        <div className="agora-item">
+          <span className="rot">
+            Fatura atual
+            {melhor ? ` (fecha ${data(banco!.proximoFechamento).slice(0, 5)}, vence ${data(melhor.venceAtual).slice(0, 5)})` : vence ? ` (vence ${data(vence).slice(0, 5)})` : ""}
+          </span>
+          <strong className="num grande">{reais(fatura?.total ?? 0)}</strong>
+          <span className="nota">
+            {!fatura
+              ? "Nenhuma compra nesta fatura ainda"
+              : [
+                  fatura.cartoes.length > 1 ? fatura.cartoes.map((c) => `${c.nome} ${reais(c.total)}`).join(" + ") : "Só as compras desta fatura, sem as parcelas futuras",
+                  fatura.pendentes > 0.004 &&
+                    (fatura.pendentes >= fatura.total - 0.004 ? "ainda pode mudar até o fechamento" : `inclui ${reais(fatura.pendentes)} pendente`),
+                ]
+                  .filter(Boolean)
+                  .join(", ")}
+          </span>
+          {melhor && (
+            <span className="nota ini-melhor-dia">
+              {melhor.agora
+                ? `Boa época para compras no cartão: o que comprar agora só vence em ${data(melhor.venceAtual).slice(0, 5)}`
+                : `Melhor dia de compra: ${data(melhor.dia).slice(0, 5)} (a partir dele, só vence em ${data(melhor.vence).slice(0, 5)})`}
+            </span>
+          )}
+          {ultima && (
+            <span className="nota">
+              {ultima.total < -0.004
+                ? `Última fatura do banco: crédito de ${reais(-ultima.total)} a seu favor`
+                : `Fatura de ${data(ultima.vencimento).slice(0, 5)} (valor do banco): ${reais(ultima.total)}, ${ultima.paga ? "paga" : "não paga ainda"}`}
+              {diferenca !== null && ultima.total > -0.004 && `. Pelos lançamentos daria ${reais(diferenca)} (diferença de ${reais(Math.abs(ultima.total - diferenca))})`}
+            </span>
+          )}
+        </div>
+      )}
       <div className="agora-item">
         <span className="rot">Patrimônio</span>
         <strong className={"num grande" + (pat && pat.valor < 0 ? " neg" : "")}>{pat ? reais(pat.valor) : "Sem dados"}</strong>
@@ -327,6 +378,221 @@ function Reserva({ brutos, saldo, hoje }: { brutos: Brutos; saldo: number | null
   );
 }
 
+// ---------- Até o próximo salário ----------
+
+/**
+ * O que vai sair da conta para pagar o cartão principal: a fatura fechada ainda não paga (valor do
+ * banco) e a atual (nossa estimativa), cada uma no seu vencimento.
+ */
+function faturasAPagar(visao: Visao, sync: EstadoSync | null, reservas: Set<string>, brutos: Brutos, hoje: string) {
+  const { cartao, vence } = situacaoAgora(visao, sync, reservas);
+  if (!cartao) return [];
+  const atual = faturaDoMes(brutos, hoje.slice(0, 7));
+  const banco = faturasDoBanco(cartao.faturas, brutos.movimentacoes, cartao.conta_id, hoje);
+  const out: { dia: string; valor: number; nome: string }[] = [];
+  let diaAtual = vence;
+  if (banco && !banco.ultima.paga && banco.ultima.vencimento >= hoje) {
+    out.push({ dia: banco.ultima.vencimento, valor: banco.ultima.total, nome: "Fatura fechada do cartão" });
+    // A atual vence no mês seguinte ao da fechada.
+    diaAtual = `${addMes(banco.ultima.vencimento.slice(0, 7), 1)}-${banco.ultima.vencimento.slice(8, 10)}`;
+  }
+  if (atual && diaAtual) out.push({ dia: diaAtual, valor: atual.total, nome: "Fatura do cartão" });
+  return out;
+}
+
+function AteOSalario({ visao, brutos, sync, reservas, hoje }: { visao: Visao; brutos: Brutos; sync: EstadoSync | null; reservas: Set<string>; hoje: string }) {
+  const { saldo } = situacaoAgora(visao, sync, reservas);
+  const p = useMemo(
+    () => (saldo === null ? null : previsao(brutos, { saldo, faturas: faturasAPagar(visao, sync, reservas, brutos, hoje) }, hoje)),
+    [saldo, brutos, visao, sync, reservas, hoje],
+  );
+  if (!p) return null;
+  const dm = (d: string) => data(d).slice(0, 5);
+  const titulo = p.salario ? `Até o salário de ${dm(p.salario.dia)}` : `Até o fim do mês`;
+  const proximos = p.eventos.filter((e) => e.dia <= p.ate);
+  const saidas = proximos.filter((e) => e.valor < 0).reduce((s, e) => s - e.valor, 0);
+  const ritmoNegativo = !p.falta && p.diaADia > p.porDia + 0.004 ? p.negativo : null;
+  return (
+    <section className="panel ini-previsao" aria-labelledby="t-previsao">
+      <h2 id="t-previsao" className="ini-rotulo">
+        {titulo}
+      </h2>
+      {p.falta ? (
+        <>
+          <strong className="num enorme neg">Vai faltar {reais(p.falta.valor)}</strong>
+          <p className="nota">Em {dm(p.falta.dia)} o saldo da conta fica negativo, mesmo sem gastar nada no dia a dia. Veja abaixo o que vence até lá.</p>
+        </>
+      ) : (
+        <>
+          <strong className="num enorme">
+            {reais(p.porDia)} <span className="ini-por-dia">por dia</span>
+          </strong>
+          <p className="nota">
+            É quanto dá para gastar por dia até {dm(p.ate)} sem o saldo da conta ficar negativo, já separando {reais(saidas)} de contas e faturas que vencem até lá
+            {p.salario ? ` e contando o salário de ${reais(p.salario.valor)}` : ""}.
+            {p.aperto && p.aperto.dia !== p.ate && ` O dia mais apertado é ${dm(p.aperto.dia)}.`}
+          </p>
+        </>
+      )}
+      {p.diaADia > 0.004 && (
+        <p className={"nota" + (ritmoNegativo ? " ini-alerta" : "")}>
+          Nos últimos 60 dias você gastou em média {reais(p.diaADia)} por dia na conta
+          {ritmoNegativo ? `: nesse ritmo, o saldo fica negativo em ${dm(ritmoNegativo)}.` : "."}
+        </p>
+      )}
+      <h3 className="ini-subtitulo">Saldo previsto da conta, dia a dia</h3>
+      <GraficoPrevisao serie={p.serie} eventos={p.eventos} />
+      {proximos.length > 0 && (
+        <ul className="ini-lista">
+          {proximos.slice(0, 6).map((e) => (
+            <li key={`${e.dia}-${e.nome}-${e.valor}`}>
+              <span className="ini-nome">
+                <b>{e.nome}</b>
+                <small>{dm(e.dia)}</small>
+              </span>
+              <span className={"ini-valor" + (e.valor > 0 ? " pos" : "")}>
+                {e.valor > 0 ? "+" : "−"}
+                {reais(Math.abs(e.valor))}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="nota">
+        Parte do saldo de hoje da conta ({reais(p.saldoHoje)}, sem a reserva).
+        {p.salario && (p.salario.pelo === "holerite" ? " Salário pela data e líquido do holerite." : " Salário previsto pelos últimos que caíram na conta.")} A fatura do cartão é a estimativa de hoje e
+        ainda cresce com as compras até o fechamento. A linha do gráfico desconta o seu gasto médio por dia.
+      </p>
+    </section>
+  );
+}
+
+// ---------- Limites de gasto ----------
+
+const COR_SITUACAO: Record<LinhaLimite["situacao"], string> = { ok: "var(--accent)", vai_passar: "var(--warn)", perto: "var(--warn)", passou: "var(--bad)" };
+
+function fraseLimite(l: LinhaLimite): string {
+  if (l.situacao === "passou") return `Passou ${reais(-l.restante)} do limite`;
+  if (l.situacao === "vai_passar" && l.previsto !== null) return `Restam ${reais(l.restante)}. No ritmo atual, chega a ${reais(l.previsto)} no fim do mês`;
+  return `Restam ${reais(l.restante)}`;
+}
+
+function EditarLimites({ brutos, mes, aoSalvar, aoFechar }: { brutos: Brutos; mes: string; aoSalvar: () => Promise<void>; aoFechar: () => void }) {
+  const cats = useMemo(() => categoriasLimitaveis(brutos, mes), [brutos, mes]);
+  const [valores, setValores] = useState<Record<string, string>>(() =>
+    Object.fromEntries(cats.map((c) => [c.categoria, c.limite !== null ? numero(c.limite) : ""])),
+  );
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function salvar() {
+    const mudou: [string, number | null][] = [];
+    for (const c of cats) {
+      const txt = valores[c.categoria] ?? "";
+      const v = txt.trim() ? lerValor(txt) : null;
+      if (txt.trim() && (v === null || v < 0)) {
+        setErro(`O limite de ${c.nome} não é um valor válido.`);
+        return;
+      }
+      const novo = v && v > 0 ? v : null;
+      if (novo !== c.limite) mudou.push([c.categoria, novo]);
+    }
+    setSalvando(true);
+    setErro(null);
+    try {
+      for (const [cat, v] of mudou) await api.definirLimite(cat, v);
+      await aoSalvar();
+      aoFechar();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não consegui salvar os limites.");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <div className="lim-editar">
+      <p className="nota">Deixe em branco a categoria que não quer limitar. A média é a dos 3 meses anteriores.</p>
+      {!cats.length && <p className="nota">Nenhuma categoria com gasto nos últimos meses.</p>}
+      <ul className="lim-campos">
+        {cats.map((c) => (
+          <li key={c.categoria}>
+            <label htmlFor={`lim-${c.categoria}`}>
+              <i className="mv-sw" style={{ background: corDe(c.cor) }} aria-hidden="true" />
+              <span>
+                <b>{c.nome}</b>
+                <small>{c.media > 0.004 ? `média de ${reais(c.media)} por mês` : "sem gasto nos últimos meses"}</small>
+              </span>
+            </label>
+            <input
+              id={`lim-${c.categoria}`}
+              type="text"
+              inputMode="decimal"
+              placeholder={c.sugestao !== null ? numero(c.sugestao) : "R$"}
+              value={valores[c.categoria] ?? ""}
+              onChange={(e) => setValores((v) => ({ ...v, [c.categoria]: e.target.value }))}
+            />
+          </li>
+        ))}
+      </ul>
+      {erro && <p className="nota ini-alerta">{erro}</p>}
+      <div className="lim-acoes">
+        <button type="button" className="primary" disabled={salvando} onClick={salvar}>
+          {salvando ? "Salvando…" : "Salvar limites"}
+        </button>
+        <button type="button" disabled={salvando} onClick={aoFechar}>
+          Cancelar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Limites({ brutos, mes, hoje, aoMudar }: { brutos: Brutos; mes: string; hoje: string; aoMudar: () => Promise<void> }) {
+  const [editando, setEditando] = useState(false);
+  const linhas = useMemo(() => limitesDoMes(brutos, mes, hoje), [brutos, mes, hoje]);
+  const nomeMes = MESES[Number(mes.slice(5, 7)) - 1];
+  return (
+    <section className="panel ini-cartao lim" aria-labelledby="t-limites">
+      <div className="ini-cab">
+        <h2 id="t-limites">Limites de gasto em {nomeMes}</h2>
+        {!editando && (
+          <button type="button" className="btn-link" onClick={() => setEditando(true)}>
+            {linhas.length ? "Editar limites" : "Definir limites"}
+          </button>
+        )}
+      </div>
+      {editando ? (
+        <EditarLimites brutos={brutos} mes={mes} aoSalvar={aoMudar} aoFechar={() => setEditando(false)} />
+      ) : !linhas.length ? (
+        <p className="nota">Escolha quanto quer gastar no máximo em cada categoria por mês. Mostro aqui quanto já foi e aviso no celular ao chegar em 80% e ao passar do limite.</p>
+      ) : (
+        <ul className="lim-lista">
+          {linhas.map((l) => (
+            <li key={l.categoria}>
+              <div className="lim-linha">
+                <a className="lim-nome" href={`#movimentos/${encodeURIComponent(l.categoria)}`}>
+                  <i className="mv-sw" style={{ background: corDe(l.cor) }} aria-hidden="true" />
+                  {l.nome}
+                </a>
+                <span className="lim-valor">
+                  <b>{reais(l.gasto)}</b> de {reais(l.limite)}
+                </span>
+              </div>
+              <div className="medidor" role="img" aria-label={`${l.pct}% do limite de ${l.nome}`}>
+                <i style={{ width: `${Math.min(100, l.pct)}%`, background: COR_SITUACAO[l.situacao] }} />
+              </div>
+              <small className={"lim-frase" + (l.situacao === "ok" ? "" : l.situacao === "passou" ? " lim-passou" : " lim-perto")}>
+                {l.pct}% · {fraseLimite(l)}
+              </small>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 // ---------- Análise do mês ----------
 
 function AnaliseDoMes({ brutos, ano, mes, hoje }: { brutos: Brutos; ano: number; mes: number | null; hoje: string }) {
@@ -353,7 +619,7 @@ function AnaliseDoMes({ brutos, ano, mes, hoje }: { brutos: Brutos; ano: number;
   );
 }
 
-export default function VisaoGeral({ visao, brutos }: { visao: Visao; brutos: Brutos; aoMudar: () => Promise<void> }) {
+export default function VisaoGeral({ visao, brutos, aoMudar }: { visao: Visao; brutos: Brutos; aoMudar: () => Promise<void> }) {
   const [sync, setSync] = useState<EstadoSync | null>(null);
 
   useEffect(() => {
@@ -367,12 +633,17 @@ export default function VisaoGeral({ visao, brutos }: { visao: Visao; brutos: Br
   const meses = useMemo(() => mesesDaBarra(ano, mes), [ano, mes]);
   const reservas = useMemo(() => idsReserva(brutos.contas), [brutos.contas]);
   const { reserva } = situacaoAgora(visao, sync, reservas);
+  // Limites: o mês escolhido na barra; ano inteiro ou mês que ainda não chegou, o mês de hoje.
+  const mesEscolhido = mes ? `${ano}-${String(mes).padStart(2, "0")}` : null;
+  const mesDosLimites = mesEscolhido && mesEscolhido <= hoje.slice(0, 7) ? mesEscolhido : hoje.slice(0, 7);
   const temReserva = reservas.size > 0 || brutos.metas.some((m) => m.usar_reserva);
 
   return (
     <>
-      <Agora visao={visao} sync={sync} reservas={reservas} />
+      <Agora visao={visao} brutos={brutos} sync={sync} reservas={reservas} hoje={hoje} />
       <Sobra brutos={brutos} meses={meses} ano={ano} mes={mes} hoje={hoje} />
+      <AteOSalario visao={visao} brutos={brutos} sync={sync} reservas={reservas} hoje={hoje} />
+      <Limites brutos={brutos} mes={mesDosLimites} hoje={hoje} aoMudar={aoMudar} />
       <div className="ini-grade">
         <ParaOnde brutos={brutos} meses={meses} />
         <DeOnde brutos={brutos} meses={meses} />

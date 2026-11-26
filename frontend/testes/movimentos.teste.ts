@@ -1,4 +1,4 @@
-import { conferirPartes, doPeriodo, filaRapida, filtrar, FILTRO_VAZIO, normalizar, partesDe, porDia, resumo, rotaMovimentos, type Filtro } from "../src/movimentos";
+import { conferirPartes, doPeriodo, filaRapida, filtrar, FILTRO_VAZIO, normalizar, instituicaoUtil, origemDe, partesDe, porDia, resumo, rotaMovimentos, type Filtro } from "../src/movimentos";
 import { resumoPorCategoria } from "../src/gastos";
 import { usoNoPeriodo } from "../src/grupos";
 
@@ -91,6 +91,42 @@ const rc = resumoPorCategoria(movs.map((x) => ({ ...(x as object), competencia: 
 ok(rc.find((x) => x.categoria === "alimentacao")?.total === 250 && rc.find((x) => x.categoria === "mercado")?.total === 382.45, "resumoPorCategoria por parte", rc);
 const uso = usoNoPeriodo(movs as never, 2026, 11);
 ok(uso.get("mercado")?.valor === 382.45 && uso.get("alimentacao")?.valor === 250, "usoNoPeriodo por parte");
+
+// origem de cada lançamento
+const nomeC = (c: { apelido?: string | null; instituicao?: string | null }) => c.apelido ?? c.instituicao ?? "Conta";
+const cc = (id: string, extra: object = {}) => ({ id, ...extra }) as never;
+const o1 = origemDe(undefined, [], nomeC);
+ok(o1.tipo === "dinheiro" && o1.rotulo === "Dinheiro" && o1.completo === "Dinheiro", "origem: sem conta é dinheiro", o1);
+ok(origemDe("dinheiro", [], nomeC).tipo === "dinheiro", "origem: 'dinheiro' é dinheiro");
+const o2 = origemDe("x", [cc("a", { tipo: "cartao" })], nomeC);
+ok(o2.tipo === "outra" && o2.rotulo === "Conta", "origem: conta removida é neutra", o2);
+const o3 = origemDe("r", [cc("r", { tipo: "corrente", papel: "reserva", instituicao: "Mercado Pago" })], nomeC);
+ok(o3.tipo === "reserva" && o3.rotulo === "Mercado Pago", "origem: reserva usa a instituição", o3);
+ok(origemDe("r", [cc("r", { papel: "reserva" })], nomeC).rotulo === "Reserva", "origem: reserva sem instituição");
+ok(origemDe("r", [cc("r", { tipo: "cartao", papel: "reserva" })], nomeC).tipo === "reserva", "origem: reserva vale mais que o tipo");
+ok(origemDe("a", [cc("a", { tipo: "cartao", instituicao: "Nubank" })], nomeC).rotulo === "Crédito", "origem: um cartão é Crédito");
+const dois = [cc("a", { tipo: "cartao", instituicao: "Nubank" }), cc("b", { tipo: "cartao", instituicao: "Santander" })];
+const oa = origemDe("a", dois, nomeC);
+const ob = origemDe("b", dois, nomeC);
+ok(oa.rotulo === "Crédito Nubank" && ob.rotulo === "Crédito Santander" && oa.chave !== ob.chave && oa.tipo === "credito", "origem: dois cartões levam a instituição", [oa, ob]);
+ok(origemDe("a", [cc("a")], nomeC).tipo === "debito" && origemDe("a", [cc("a")], nomeC).rotulo === "Débito", "origem: sem tipo é débito");
+const cr = [cc("a", { tipo: "corrente", instituicao: "Itaú" }), cc("r", { tipo: "corrente", papel: "reserva", instituicao: "Mercado Pago" })];
+ok(origemDe("a", cr, nomeC).rotulo === "Débito", "origem: a reserva não conta para o sufixo");
+ok(origemDe("a", cr, nomeC).completo === "Itaú", "origem: completo vem de nomeCompleto");
+
+ok(origemDe("a", [cc("a", { tipo: "cartao" })], nomeC).chave === "credito", "origem: chave de um cartão");
+ok(origemDe("a", dois, nomeC).chave === "credito:a", "origem: chave de dois cartões");
+const res = origemDe("r", [cc("r", { tipo: "corrente", papel: "reserva", instituicao: "Open Finance (Pluggy)" })], nomeC);
+ok(res.rotulo === "Reserva" && res.chave === "reserva:r", "origem: reserva com Pluggy vira Reserva", res);
+const pl = [cc("a", { tipo: "cartao", instituicao: "Open Finance (Pluggy)" }), cc("b", { tipo: "cartao", instituicao: "Nubank" })];
+ok(origemDe("a", pl, nomeC).rotulo === "Crédito" && origemDe("b", pl, nomeC).rotulo === "Crédito Nubank", "origem: Pluggy não vira sufixo");
+const sa = [cc("a", { tipo: "cartao", instituicao: "Banco Santander (33)" }), cc("b", { tipo: "cartao", instituicao: "Nubank" })];
+ok(origemDe("a", sa, nomeC).rotulo === "Crédito Banco Santander", "origem: tira o código do banco");
+ok(instituicaoUtil({ instituicao: "Banco Santander (33)" }) === "Banco Santander" && instituicaoUtil({ instituicao: "Open Finance (Pluggy)" }) === null && instituicaoUtil({}) === null, "instituicaoUtil");
+const cs = [cc("a", { tipo: "corrente", instituicao: "Itaú" }), cc("b", { tipo: "corrente", instituicao: "Inter" })];
+ok(origemDe("a", cs, nomeC).rotulo === "Débito Itaú" && origemDe("b", cs, nomeC).chave === "debito:b", "origem: duas correntes levam a instituição");
+const rem = origemDe("sumiu", [], nomeC);
+ok(rem.rotulo === "Conta" && rem.completo === "sumiu", "origem: conta removida mantém o id no completo", rem);
 
 if (falhas) {
   console.error(`${falhas} falha(s)`);

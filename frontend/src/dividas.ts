@@ -155,7 +155,7 @@ export function parcelasDoCartao(b: Brutos): Parcelada[] {
 
 /** Parcelamentos ainda correndo (cartão e informados), no formato da simulação do plano. */
 export function parceladasAtivas(b: Brutos): Parcelada[] {
-  return [...parcelasCartao(b), ...parcelasInformadas(b)].filter((p) => p.restantes > 0).map((p) => ({ nome: p.descricao, valor: p.valor, meses: p.meses }));
+  return parcelasAtivas(b).map((p) => ({ nome: p.descricao, valor: p.valor, meses: p.meses }));
 }
 
 /** O saldo mais recente informado da dívida. */
@@ -230,6 +230,18 @@ function taxaDa(d: Divida): number | null {
 export const pct = (taxa: number) => `${(Math.round(taxa * 1000) / 10).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`;
 
 // ---------- lista única ----------
+
+/** Parcelamentos com parcelas ainda por vir: compras do cartão e dívidas parceladas cadastradas. */
+export function parcelasAtivas(b: Brutos, pc: Parcelamento[] = parcelasCartao(b)): Parcelamento[] {
+  return [...pc, ...parcelasInformadas(b)].filter((p) => p.restantes > 0);
+}
+
+/** Quanto de cada fatura futura já está ocupado por parcelas: [mês "AAAA-MM", valor], em ordem. */
+export function parcelasPorFatura(b: Brutos): [string, number][] {
+  const porMes: Record<string, number> = {};
+  parcelasAtivas(b).forEach((p) => p.meses.forEach((m) => (porMes[m] = (porMes[m] ?? 0) + p.valor)));
+  return Object.entries(porMes).sort((a, b) => a[0].localeCompare(b[0]));
+}
 
 export interface DividaVista {
   id: string;
@@ -415,6 +427,99 @@ export function resumo(v: DividaVista[], b: Brutos, hoje: string) {
     livre: parceladas.reduce<string | null>((m, x) => (m === null || x.fim! > m ? x.fim : m), null),
     semData: v.filter((x) => x.parcela === null).length,
   };
+}
+
+// ---------- projeção de um mês futuro ----------
+
+export interface ItemProjecao {
+  divida: DividaVista;
+  saldo: number;
+  parcelaDoMes: number;
+  /** Parcelas que ainda faltam depois do mês; null = dívida sem data. */
+  faltam: number | null;
+  /** A dívida como estará no fim do mês (mesmo formato da tela de hoje), para a mesma linha da lista. */
+  vista: DividaVista;
+}
+
+export interface Projecao {
+  mes: string;
+  deve: number;
+  deveHoje: number;
+  parcelasDoMes: number;
+  peso: number | null;
+  itens: ItemProjecao[];
+  quitadas: { divida: DividaVista; quitadaEm: string }[];
+}
+
+const mesesEntre = (de: string, ate: string) => {
+  const [a1, m1] = de.split("-").map(Number);
+  const [a2, m2] = ate.split("-").map(Number);
+  return (a2 - a1) * 12 + (m2 - m1);
+};
+
+/**
+ * Como ficam as dívidas no fim de `mes` (AAAA-MM, futuro), supondo que todas as parcelas sejam pagas em dia.
+ * O saldo é nominal (parcela × parcelas que faltam), com ou sem juros: a mesma base de "Você deve" na tela de hoje.
+ */
+export function projetar(b: Brutos, mes: string, hoje: string): Projecao {
+  const vistas = juntarDividas(b, hoje);
+  const itens: ItemProjecao[] = [];
+  const quitadas: Projecao["quitadas"] = [];
+  let parcelasDoMes = 0;
+  for (const d of vistas) {
+    if (d.parcela === null) {
+      // Sem parcela não há "Venceu" nem "Próxima" de uma data que já passou do mês escolhido.
+      const vista: DividaVista = {
+        ...d,
+        atraso: false,
+        etiqueta: etiquetaDe(false, d.taxa),
+        proxima: d.proxima && d.proxima.data.slice(0, 7) >= mes ? d.proxima : null,
+      };
+      itens.push({ divida: d, saldo: d.ateOFim, parcelaDoMes: 0, faltam: null, vista });
+      continue;
+    }
+    // Mesma base de `resumo`: o mês da primeira parcela que falta, derivado do fim.
+    const inicio = d.fim ? addMes(d.fim, -(d.restantes - 1)) : d.proxima ? d.proxima.data.slice(0, 7) : hoje.slice(0, 7);
+    const pagas = mes < inicio ? 0 : Math.min(d.restantes, mesesEntre(inicio, mes) + 1);
+    const faltam = d.restantes - pagas;
+    const parcelaDoMes = d.fim !== null && inicio <= mes && mes <= d.fim ? d.parcela : 0;
+    parcelasDoMes += parcelaDoMes;
+    if (faltam === 0) {
+      quitadas.push({ divida: d, quitadaEm: d.fim ?? mes });
+      continue;
+    }
+    const saldo = r2(d.parcela * faltam);
+    // Primeira parcela que ainda cai de `mes` em diante (nunca uma data anterior: não há "Venceu" na projeção).
+    const proximoMes = mes > inicio ? mes : inicio;
+    const vista: DividaVista = {
+      ...d,
+      restantes: faltam,
+      pagas: d.pagas === null ? null : d.pagas + pagas,
+      proxima: { valor: d.parcela, data: proximoMes },
+      quitarHoje: saldo,
+      ateOFim: saldo,
+      juros: 0,
+      atraso: false,
+      etiqueta: etiquetaDe(false, d.taxa),
+    };
+    itens.push({ divida: d, saldo, parcelaDoMes, faltam, vista });
+  }
+  const salario = salarioMedio(b, hoje);
+  return {
+    mes,
+    deve: r2(itens.reduce((s, x) => s + x.saldo, 0)),
+    deveHoje: r2(vistas.reduce((s, x) => s + x.ateOFim, 0)),
+    parcelasDoMes: r2(parcelasDoMes),
+    peso: salario ? parcelasDoMes / salario : null,
+    itens,
+    quitadas,
+  };
+}
+
+/** Mês escolhido no topo como AAAA-MM (só o ano = dezembro dele); null quando esse mês não é posterior ao mês de hoje. */
+export function mesDaProjecao(ano: number, mes: number | null, hoje: string): string | null {
+  const m = `${ano}-${String(mes ?? 12).padStart(2, "0")}`;
+  return m > hoje.slice(0, 7) ? m : null;
 }
 
 // ---------- pagamentos achados no banco ----------

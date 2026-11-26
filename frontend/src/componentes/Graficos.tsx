@@ -478,3 +478,48 @@ export function GraficoPatrimonioPeriodo({ pontos }: { pontos: { mes: string; va
     </div>
   );
 }
+
+/**
+ * Saldo previsto da conta no fim de cada dia. Uma linha só (o título do quadro diz o que é); abaixo
+ * de zero ela fica vermelha, os dias com conta ou salário ganham um ponto e o zero tem linha forte.
+ */
+export function GraficoPrevisao({ serie, eventos }: { serie: { dia: string; saldo: number }[]; eventos: { dia: string; nome: string; valor: number }[] }) {
+  const c = useCores();
+  const porDia = new Map<string, { nome: string; valor: number }[]>();
+  for (const e of eventos) porDia.set(e.dia, [...(porDia.get(e.dia) ?? []), e]);
+  const o = opcoes(c) as ChartOptions<"line">;
+  o.plugins!.tooltip!.callbacks = {
+    title: (itens) => data(serie[itens[0].dataIndex].dia).slice(0, 5),
+    label: (ctx) => `Saldo previsto: ${reais(ctx.parsed.y)}`,
+    afterLabel: (ctx) => (porDia.get(serie[ctx.dataIndex].dia) ?? []).map((e) => `${e.nome}: ${e.valor > 0 ? "+" : "−"}${reais(Math.abs(e.valor))}`),
+  };
+  const y = o.scales!.y as { grid: { color: unknown; lineWidth?: unknown } };
+  y.grid = { color: (ctx: { tick: { value: number } }) => (ctx.tick.value === 0 ? c.ink3 : c.line), lineWidth: (ctx: { tick: { value: number } }) => (ctx.tick.value === 0 ? 1.5 : 1) };
+  (o.scales!.x as { ticks: object }).ticks = { color: c.ink2, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 };
+  return (
+    <div className="chartbox an-medio">
+      <Line
+        options={o}
+        data={{
+          labels: serie.map((p) => data(p.dia).slice(0, 5)),
+          datasets: [
+            {
+              label: "Saldo previsto",
+              data: serie.map((p) => p.saldo),
+              borderColor: c.accent,
+              borderWidth: 2,
+              tension: 0,
+              segment: { borderColor: (ctx) => (ctx.p1.parsed.y < 0 ? c.bad : c.accent) },
+              pointRadius: serie.map((p) => (porDia.has(p.dia) ? 4 : 0)),
+              pointHoverRadius: 6,
+              pointBackgroundColor: serie.map((p) => (p.saldo < 0 ? c.bad : c.accent)),
+              pointBorderColor: c.surface,
+              pointBorderWidth: 2,
+              pointHitRadius: 8,
+            },
+          ],
+        }}
+      />
+    </div>
+  );
+}

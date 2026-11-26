@@ -6,12 +6,15 @@ description = "API do Financeiro: lê os dados em JSON, calcula indicadores e co
 
 [dependencies]
 anyhow = "1"
+aes-gcm = "0.10"
 argon2 = "0.5"
 axum = { version = "0.7", features = ["multipart"] }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 hex = "0.4"
+hkdf = "0.12"
 hmac = "0.12"
+p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
 pdf-extract = "0.12"
 rand = "0.8"
 regex = "1"
@@ -25,4 +28,5 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "fs", "limit", "set-header", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unicode-normalization = "0.1"
 

@@ -1,9 +1,12 @@
 import { semCategoria } from "./grupos";
 /** Regras da navegação nova: endereços, menus, mês vizinho, pendentes e valor digitado. */
 
-export type Tela = "inicio" | "movimentos" | "dividas" | "objetivos" | "analises" | "fixas" | "pessoas" | "categorias" | "salarios" | "ajustes" | "mais";
+export type Tela = "inicio" | "movimentos" | "dividas" | "objetivos" | "analises" | "fixas" | "pessoas" | "categorias" | "salarios" | "ajustes" | "mais" | "fechamento";
 
-const TELAS: Tela[] = ["inicio", "movimentos", "dividas", "objetivos", "analises", "fixas", "pessoas", "categorias", "salarios", "ajustes", "mais"];
+/** As telas que aparecem nos menus (o fechamento só se abre por link). */
+export type TelaDeMenu = Exclude<Tela, "fechamento">;
+
+const TELAS: Tela[] = ["inicio", "movimentos", "dividas", "objetivos", "analises", "fixas", "pessoas", "categorias", "salarios", "ajustes", "mais", "fechamento"];
 
 /** Endereços antigos que continuam funcionando. */
 const ANTIGOS: Record<string, Tela> = {
@@ -13,24 +16,24 @@ const ANTIGOS: Record<string, Tela> = {
   metas: "objetivos",
 };
 
-export const MENU_PRINCIPAL: [Tela, string][] = [
+export const MENU_PRINCIPAL: [TelaDeMenu, string][] = [
   ["inicio", "Início"],
   ["movimentos", "Movimentos"],
   ["dividas", "Dívidas"],
   ["objetivos", "Objetivos"],
   ["analises", "Análises"],
 ];
-export const MENU_ORGANIZAR: [Tela, string][] = [
+export const MENU_ORGANIZAR: [TelaDeMenu, string][] = [
   ["fixas", "Contas fixas"],
   ["pessoas", "Pessoas"],
 ];
-export const MENU_FIM: [Tela, string][] = [
+export const MENU_FIM: [TelaDeMenu, string][] = [
   ["categorias", "Categorias"],
   ["salarios", "Salários"],
   ["ajustes", "Ajustes"],
 ];
 /** Lista da tela "Mais" do celular. */
-export const MENU_MAIS: [Tela, string][] = [
+export const MENU_MAIS: [TelaDeMenu, string][] = [
   ["dividas", "Dívidas"],
   ["analises", "Análises"],
   ["fixas", "Contas fixas"],

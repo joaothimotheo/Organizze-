@@ -134,7 +134,7 @@ export function sobraDoPeriodo(movs: Movimentacao[], meses: string[], hoje: stri
 }
 
 /** Pagamentos de dívida do mês (positivo); com `ateDia`, só os feitos até esse dia. */
-function dividasPagasNoMes(movs: Movimentacao[], mes: string, ateDia?: string): number {
+export function dividasPagasNoMes(movs: Movimentacao[], mes: string, ateDia?: string): number {
   return r2(movs.filter((m) => m.natureza === "pagamento_divida" && compDe(m) === mes && (!ateDia || m.data.slice(0, 10) <= ateDia)).reduce((s, m) => s - m.valor, 0));
 }
 
@@ -160,7 +160,7 @@ const mesDaFixa = (m: Movimentacao) => m.vinculo?.mes || compDe(m);
 const ligadoAFixa = (m: Movimentacao, f: Fixa, mes: string) => m.vinculo?.tipo === "fixa" && m.vinculo.id === f.id && mesDaFixa(m) === mes;
 
 /** A conta fixa já está paga no mês: marcada, achada no banco (fixas.ts) ou com um lançamento ligado a ela. */
-function fixaPaga(f: Fixa, movs: Movimentacao[], mes: string): boolean {
+export function fixaPaga(f: Fixa, movs: Movimentacao[], mes: string): boolean {
   return situacao(f, movs, mes, 1).tipo === "paga" || movs.some((m) => ligadoAFixa(m, f, mes));
 }
 
@@ -383,6 +383,107 @@ export function faturaCartao(b: Brutos, hoje: string): FaturaCartao | null {
     return { mes: m, valor: r2(pc.reduce((s, p) => s + (p.meses.includes(venc) ? p.valor : 0), 0)) };
   });
   return { mes, total: r2(cartoes.reduce((s, c) => s + c.total, 0)), linhas, cartoes, futuras };
+}
+
+export interface FaturaDoMes {
+  /** Gastos menos estornos de todos os cartões nessa competência. */
+  total: number;
+  /** Quanto disso ainda está pendente (pode mudar até o fechamento). */
+  pendentes: number;
+  /** Cada cartão com algo nessa fatura, na ordem das contas. */
+  cartoes: { conta: string; nome: string; total: number }[];
+}
+
+/**
+ * A fatura aberta de um mês (competência = fatura prevista pelo banco), diferente do saldo do
+ * cartão, que conta todo o limite usado (parcelas de faturas futuras inclusive). Entram também as
+ * compras ainda pendentes marcadas em competências anteriores: a Pluggy às vezes as deixa na
+ * fatura já paga. Pagamentos de fatura (transferências) não entram. Null quando não há nada.
+ */
+export function faturaDoMes(b: Brutos, mes: string): FaturaDoMes | null {
+  const cartoes: FaturaDoMes["cartoes"] = [];
+  let pendentes = 0;
+  for (const c of b.contas.filter((x) => x.tipo === "cartao")) {
+    // Pendentes que o banco ainda deixou numa fatura anterior (já fechada) estão, na prática, na atual.
+    const naFatura = (m: Movimentacao) => compDe(m) === mes || (m.status === "pendente" && compDe(m) < mes);
+    const doMes = b.movimentacoes.filter((m) => m.conta_id === c.id && naFatura(m) && (ehGasto(m) || m.natureza === "estorno"));
+    if (!doMes.length) continue;
+    const total = doMes.reduce((s, m) => s - m.valor, 0);
+    pendentes += doMes.filter((m) => ehGasto(m) && m.status === "pendente").reduce((s, m) => s - m.valor, 0);
+    cartoes.push({ conta: c.id, nome: c.apelido || c.instituicao || "Cartão", total: r2(total) });
+  }
+  if (!cartoes.length) return null;
+  return { total: r2(cartoes.reduce((s, c) => s + c.total, 0)), pendentes: r2(pendentes), cartoes };
+}
+
+export interface FaturaFechada {
+  fechamento: string | null;
+  vencimento: string;
+  total: number;
+  minimo: number | null;
+}
+
+/** Mesmo dia do mês, `n` meses depois; dia 31 em mês mais curto vira o último dia dele. */
+const mesmoDia = (iso: string, n: number) => diaNoMes(addMes(iso.slice(0, 7), n), Number(iso.slice(8, 10)));
+
+/**
+ * O que o banco informa das faturas de um cartão (só as fechadas: a Pluggy não dá a aberta).
+ * `ultima`: a fechada mais recente, com o valor exato do banco, se já foi paga (pagamentos no
+ * cartão do fechamento até 10 dias depois do vencimento) e a soma dos nossos lançamentos daquela
+ * competência, para comparar. `proximoFechamento`: estimado pelo dia do último fechamento.
+ */
+export function faturasDoBanco(
+  faturas: FaturaFechada[] | null | undefined,
+  movs: Movimentacao[],
+  contaId: string | undefined,
+  hoje: string,
+): { ultima: { vencimento: string; total: number; paga: boolean; lancamentos: number }; proximoFechamento: string | null } | null {
+  const f = [...(faturas ?? [])].sort((a, b) => b.vencimento.localeCompare(a.vencimento))[0];
+  if (!f) return null;
+  const doCartao = movs.filter((m) => m.conta_id === contaId);
+  const limitePagamento = addDias(f.vencimento, 10);
+  const pago = doCartao
+    .filter((m) => m.valor > 0 && m.natureza !== "estorno" && m.data.slice(0, 10) >= (f.fechamento ?? f.vencimento) && m.data.slice(0, 10) <= limitePagamento)
+    .reduce((s, m) => s + m.valor, 0);
+  const lancamentos = f.fechamento
+    ? doCartao.filter((m) => compDe(m) === f.fechamento!.slice(0, 7) && (ehGasto(m) || m.natureza === "estorno")).reduce((s, m) => s - m.valor, 0)
+    : 0;
+  let proximo: string | null = null;
+  if (f.fechamento) {
+    proximo = mesmoDia(f.fechamento, 1);
+    for (let i = 2; proximo < hoje && i < 14; i++) proximo = mesmoDia(f.fechamento, i);
+  }
+  return { ultima: { vencimento: f.vencimento, total: f.total, paga: f.total <= 0.004 || pago >= f.total - 1, lancamentos: r2(lancamentos) }, proximoFechamento: proximo };
+}
+
+/**
+ * Melhor dia de compra no cartão: o dia seguinte ao fechamento. `venceAtual`: vencimento da fatura
+ * que fecha em `proximoFechamento` (o primeiro dia de vencimento depois dele); a compra feita a
+ * partir do melhor dia só vence um mês depois (`vence`). `agora`: hoje está entre o dia seguinte ao
+ * fechamento anterior e 10 dias depois dele (a melhor época do mês; o que comprar vence em `venceAtual`).
+ */
+export function melhorDiaDeCompra(
+  proximoFechamento: string | null | undefined,
+  vencimento: string | null | undefined,
+  hoje: string,
+): { dia: string; venceAtual: string; vence: string; agora: boolean } | null {
+  if (!proximoFechamento || !vencimento) return null;
+  const diaVenc = Number(vencimento.slice(8, 10));
+  let venceAtual = diaNoMes(proximoFechamento.slice(0, 7), diaVenc);
+  if (venceAtual <= proximoFechamento) venceAtual = diaNoMes(addMes(proximoFechamento.slice(0, 7), 1), diaVenc);
+  const anterior = mesmoDia(proximoFechamento, -1);
+  return {
+    dia: addDias(proximoFechamento, 1),
+    venceAtual,
+    vence: mesmoDia(venceAtual, 1),
+    agora: hoje >= addDias(anterior, 1) && hoje <= addDias(anterior, 10),
+  };
+}
+
+function addDias(iso: string, n: number): string {
+  const d = new Date(`${iso.slice(0, 10)}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
 }
 
 export function fraseCartao(r: FaturaCartao | null): string {

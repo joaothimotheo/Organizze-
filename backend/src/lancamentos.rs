@@ -267,7 +267,7 @@ pub fn editar(m: &mut Value, cats: &Value, partes: Option<Option<Vec<Value>>>, v
 
 /// Mês marcado pela fixa ligada a este lançamento: o guardado ao ligar (`vinculo.mes`) ou, num
 /// vínculo antigo sem ele, o da competência.
-fn mes_da_fixa(m: &Value) -> String {
+pub fn mes_da_fixa(m: &Value) -> String {
     m["vinculo"]["mes"].as_str().filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| competencia(m))
 }
 

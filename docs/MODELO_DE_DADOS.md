@@ -98,6 +98,13 @@ Séries do Banco Central (SGS): 432 Selic meta % a.a., 11 Selic diária, 12 CDI 
 ### documentos.json → `documentos[]`
 `{id, nome_original, caminho, sha256, tipo: holerite|extrato|contrato|nota_corretagem|outros, instituicao, competencia, processado_em, registros_gerados: {holerites, movimentacoes, ...}}`
 
+### avisos (arquivo `avisos`, fica só no servidor)
+Avisos no celular (Web Push). Guarda a chave privada VAPID, por isso não sai em `/api/dados`, não aparece nas fontes e fica fora da exportação e da restauração da cópia de segurança. As chaves são geradas na primeira vez (`FINANCEIRO_VAPID_ASSUNTO` é opcional).
+
+`{schema_version, chaves {publica, privada}, aparelhos [{id, endpoint, p256dh, auth, nome, criado_em, ultimo_envio, falhas}], tipos {fixa_vencendo, assinatura_nova, fatura, fechamento_mes: boolean}, enviados [{chave, em}], cartoes {id_do_cartao: {fechamento, vencimento, fechada {fechamento, vencimento}}}}`
+
+`enviados` evita repetir um aviso (guarda cada chave por 120 dias). Aparelho some da lista quando a assinatura expira ou após 5 falhas seguidas. `cartoes` lembra o último ciclo visto de cada cartão; `fechada` é o último ciclo já fechado (datas de fechamento e vencimento), usado no aviso "fatura vence" e só muda quando o próximo ciclo fecha.
+
 ## Indicadores do painel (definições)
 
 - **Salário líquido**: soma de `holerites.liquido` com competência no período.

@@ -1,5 +1,6 @@
 // Tipos das respostas do back-end (espelham backend/src/calculos.rs e backend/src/importar).
 import { registrarCategorias } from "./formato";
+import { idsReserva } from "./reserva";
 
 export interface Fluxo {
   lancamentos: number;
@@ -278,6 +279,13 @@ export interface Brutos {
   fixasIgnoradas: string[];
   /** As categorias já viraram grupos (`categorias.json` versão 2). */
   categoriasMigradas: boolean;
+  /** Limites de gasto mensal por categoria (`orcamentos.json`). */
+  limites?: LimiteGasto[];
+}
+
+export interface LimiteGasto {
+  categoria: string;
+  limite: number;
 }
 
 export interface SaldoMensal {
@@ -407,8 +415,7 @@ export interface ContaCadastrada {
   pluggy_id?: string | null;
 }
 
-/** Contas correntes marcadas como reserva. */
-export const idsReserva = (contas: ContaCadastrada[]) => new Set(contas.filter((c) => c.papel === "reserva").map((c) => c.id));
+export { idsReserva };
 
 // ---------- importação ----------
 
@@ -509,6 +516,8 @@ export type ExecucaoSync = {
     limite_usado?: number | null;
     vencimento?: string | null;
     fechamento?: string | null;
+    /** Faturas já fechadas, com o valor do banco (a mais recente primeiro). */
+    faturas?: { fechamento: string | null; vencimento: string; total: number; minimo: number | null }[] | null;
     contagem?: ContagemSync;
   }[];
 };
@@ -565,10 +574,21 @@ const lista = <T,>(v: unknown, chave: string): T[] => {
   return Array.isArray(x) ? (x as T[]) : [];
 };
 
+export type TiposAvisos = { fixa_vencendo: boolean; assinatura_nova: boolean; fatura: boolean; fechamento_mes: boolean; orcamento: boolean };
+export type AparelhoAviso = { id: string; nome: string; criado_em: string; ultimo_envio: string | null };
+export type EstadoAvisos = { chave_publica: string; tipos: TiposAvisos; aparelhos: AparelhoAviso[] };
+
 export const api = {
   sessao: () => pedir<EstadoSessao>("/api/sessao"),
   entrar: (usuario: string, senha: string) => pedir<{ autenticado: boolean }>("/api/sessao", { method: "POST", body: JSON.stringify({ usuario, senha }) }),
   sair: () => pedir<{ autenticado: boolean }>("/api/sessao", { method: "DELETE" }),
+
+  avisos: () => pedir<EstadoAvisos>("/api/avisos"),
+  registrarAparelho: (a: { endpoint: string; p256dh: string; auth: string; nome: string }) =>
+    pedir<{ id: string }>("/api/avisos/aparelhos", { method: "POST", body: JSON.stringify(a) }),
+  removerAparelho: (id: string) => pedir<{ ok: boolean }>(`/api/avisos/aparelhos/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  tiposAvisos: (t: TiposAvisos) => pedir<TiposAvisos>("/api/avisos/tipos", { method: "PUT", body: JSON.stringify(t) }),
+  testarAvisos: () => pedir<{ enviados: number; removidos: number }>("/api/avisos/teste", { method: "POST" }),
 
   visaoGeral: (ano: number, mes: number | null, fonte: FonteDados = "banco") =>
     pedir<VisaoGeral>(`/api/visao-geral?ano=${ano}${mes ? `&mes=${mes}` : ""}${fonte === "documentos" ? "&fonte=documentos" : ""}`),
@@ -582,8 +602,8 @@ export const api = {
   /** `documentos`: modelo antigo, sem o que veio da sincronização com o banco. */
   async brutos(fonte: FonteDados = "banco"): Promise<Brutos> {
     const q = fonte === "documentos" ? "?fonte=documentos" : "";
-    const [[h, m, d, doc, cfg, emp, met, fix], cats] = await Promise.all([
-      Promise.all(["holerites", "movimentacoes", "dividas", "documentos", "config", "emprestimos", "metas", "fixas"].map((a) => pedir<unknown>(`/api/dados/${a}${q}`))),
+    const [[h, m, d, doc, cfg, emp, met, fix, orc], cats] = await Promise.all([
+      Promise.all(["holerites", "movimentacoes", "dividas", "documentos", "config", "emprestimos", "metas", "fixas", "orcamentos"].map((a) => pedir<unknown>(`/api/dados/${a}${q}`))),
       pedir<{ migrado: boolean; grupos: CategoriaInfo[] }>("/api/categorias"),
     ]);
     // Antes e depois de migrar, cada item tem pelo menos `id` e `nome`.
@@ -605,6 +625,7 @@ export const api = {
       saldosContas: lista<SaldoMensal>(m, "saldos"),
       fixasIgnoradas: lista<string>(fix, "ignoradas"),
       categoriasMigradas: cats?.migrado === true,
+      limites: lista<LimiteGasto>(orc, "limites"),
     };
   },
 
@@ -662,6 +683,9 @@ export const api = {
   /** Desfaz um lançamento feito à mão (os que vieram do banco não podem ser apagados). */
   apagarLancamento: (id: string) => pedir<unknown>(`/api/movimentacoes/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
+  /** Define o limite mensal de uma categoria; `null` tira. */
+  definirLimite: (categoria: string, limite: number | null) =>
+    pedir<{ categoria: string; limite: number | null }>(`/api/orcamentos/${encodeURIComponent(categoria)}`, { method: "PUT", body: JSON.stringify({ limite }) }),
   criarFixa: (f: NovaFixa) => pedir<Fixa>("/api/fixas", { method: "POST", body: JSON.stringify(f) }),
   editarFixa: (id: string, f: NovaFixa) => pedir<Fixa>(`/api/fixas/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(f) }),
   excluirFixa: (id: string) => pedir<unknown>(`/api/fixas/${encodeURIComponent(id)}`, { method: "DELETE" }),

@@ -17,7 +17,7 @@ use sqlx::Row;
 
 use crate::modelo::*;
 
-pub const ARQUIVOS: [(&str, &str, &str); 12] = [
+pub const ARQUIVOS: [(&str, &str, &str); 14] = [
     ("config", "Contas e preferências", "contas"),
     ("holerites", "Holerites", "holerites"),
     ("movimentacoes", "Extratos e faturas", "movimentacoes"),
@@ -27,16 +27,27 @@ pub const ARQUIVOS: [(&str, &str, &str); 12] = [
     ("investimentos", "Investimentos", "investimentos"),
     ("metas", "Metas", "metas"),
     ("fixas", "Contas fixas e assinaturas", "fixas"),
+    ("orcamentos", "Limites de gasto por categoria", "limites"),
     ("indicadores", "Selic e CDI (BCB)", "series"),
     ("documentos", "Documentos processados", "documentos"),
     ("sincronizacoes", "Sincronizações com o banco (Open Finance)", "execucoes"),
+    ("avisos", "Avisos no celular", "aparelhos"),
 ];
+
+/// Arquivos que ficam só no servidor: guardam a chave privada VAPID e os endereços dos aparelhos.
+/// Não saem por `/api/dados`, pelas fontes nem pela cópia de segurança.
+const RESERVADOS: [&str; 1] = ["avisos"];
 
 /// Quantas versões anteriores de cada arquivo guardar.
 const VERSOES_GUARDADAS: i64 = 30;
 
 pub fn arquivo_valido(nome: &str) -> bool {
     ARQUIVOS.iter().any(|(n, _, _)| *n == nome)
+}
+
+/// Arquivo que a API pode mostrar e que entra na cópia de segurança.
+pub fn arquivo_publico(nome: &str) -> bool {
+    arquivo_valido(nome) && !RESERVADOS.contains(&nome)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -169,6 +180,9 @@ impl Armazenamento {
     pub async fn fontes(&self) -> Vec<Fonte> {
         let mut out = Vec::new();
         for (nome, descricao, chave) in ARQUIVOS {
+            if !arquivo_publico(nome) {
+                continue;
+            }
             let mut f = Fonte {
                 arquivo: format!("{nome}.json"),
                 descricao: descricao.to_string(),

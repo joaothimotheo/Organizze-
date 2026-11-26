@@ -116,6 +116,12 @@ impl Pluggy {
         Ok(v["results"].as_array().cloned().unwrap_or_default())
     }
 
+    /// Faturas já fechadas do cartão (a Pluggy não informa a fatura aberta).
+    pub async fn faturas(&self, conta: &str) -> Result<Value> {
+        let url = reqwest::Url::parse_with_params(&format!("{API}/bills"), [("accountId", conta), ("pageSize", "12")])?;
+        self.get(url.as_str(), "faturas").await
+    }
+
     /// Todas as transações da conta entre as datas (inclusive), seguindo o cursor da API v2.
     pub async fn transacoes(&self, conta: &str, de: NaiveDate, ate: NaiveDate) -> Result<Vec<Value>> {
         let primeira = reqwest::Url::parse_with_params(
@@ -758,6 +764,18 @@ pub async fn sincronizar(arm: &Armazenamento, p: &Pluggy, hoje: NaiveDate, agora
                     atualizar_divida_cartao(&mut dividas, &conta_id, &apelido, u, saldo, hoje);
                 }
             }
+            // Faturas fechadas, com o valor exato do banco. Se a Pluggy falhar aqui, a sincronização segue sem elas.
+            let faturas = if conta["type"].as_str() == Some("CREDIT") {
+                match p.faturas(&pid).await {
+                    Ok(v) => resumir_faturas(&v),
+                    Err(e) => {
+                        tracing::warn!("faturas do cartão {nome}: {e:#}");
+                        Value::Null
+                    }
+                }
+            } else {
+                Value::Null
+            };
             let papel = cfg["contas"].as_array().and_then(|l| l.iter().find(|c| c["id"].as_str() == Some(conta_id.as_str()))).map(|c| c["papel"].clone()).unwrap_or(Value::Null);
             relatorio_contas.push(json!({
                 "conta": nome,
@@ -770,6 +788,7 @@ pub async fn sincronizar(arm: &Armazenamento, p: &Pluggy, hoje: NaiveDate, agora
                 "limite_usado": if conta["type"].as_str() == Some("CREDIT") { json!(usado) } else { Value::Null },
                 "vencimento": cd["balanceDueDate"],
                 "fechamento": cd["balanceCloseDate"],
+                "faturas": faturas,
                 "periodo": [de.to_string(), hoje.to_string()],
                 "recebidas": txs.len(),
                 "ate_mes_coberto_por_documento": corte,
@@ -915,6 +934,26 @@ pub async fn registrar(arm: &Armazenamento, execucao: Value, agora: &str) -> Res
     arm.gravar_valor("sincronizacoes", &doc).await
 }
 
+/// Faturas fechadas da Pluggy (`GET /bills`) em `{fechamento, vencimento, total, minimo}`, da mais
+/// recente para a mais antiga, só as 6 últimas. `total` negativo = crédito a favor no cartão.
+pub fn resumir_faturas(v: &Value) -> Value {
+    let dia = |x: &Value| x.as_str().filter(|s| s.len() >= 10).map(|s| s[..10].to_string());
+    let mut l: Vec<Value> = v["results"]
+        .as_array()
+        .map(|a| a.as_slice())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|b| {
+            let venc = dia(&b["dueDate"])?;
+            let total = b["totalAmount"].as_f64()?;
+            Some(json!({ "fechamento": dia(&b["billClosingDate"]), "vencimento": venc, "total": r2(total), "minimo": b["minimumPaymentAmount"].as_f64().map(r2) }))
+        })
+        .collect();
+    l.sort_by(|a, b| b["vencimento"].as_str().cmp(&a["vencimento"].as_str()));
+    l.truncate(6);
+    json!(l)
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -957,6 +996,21 @@ mod testes {
         assert_eq!(m["competencia"], "2026-11");
         assert_eq!(m["status"], "confirmado");
         assert_eq!(m["id"], "pluggy-t1");
+    }
+
+    #[test]
+    fn faturas_fechadas_da_mais_recente_para_a_mais_antiga() {
+        let v = json!({ "results": [
+            { "dueDate": "2026-10-07T00:00:00.000Z", "billClosingDate": "2026-09-30T00:00:00.000Z", "totalAmount": 1890.73, "minimumPaymentAmount": 221.1 },
+            { "dueDate": "2026-11-07T00:00:00.000Z", "billClosingDate": "2026-10-30T00:00:00.000Z", "totalAmount": 2095.914, "minimumPaymentAmount": null },
+            { "dueDate": null, "totalAmount": 1.0 }
+        ] });
+        let l = resumir_faturas(&v);
+        assert_eq!(l, json!([
+            { "fechamento": "2026-10-30", "vencimento": "2026-11-07", "total": 2095.91, "minimo": null },
+            { "fechamento": "2026-09-30", "vencimento": "2026-10-07", "total": 1890.73, "minimo": 221.1 }
+        ]));
+        assert_eq!(resumir_faturas(&json!({})), json!([]));
     }
 
     #[test]

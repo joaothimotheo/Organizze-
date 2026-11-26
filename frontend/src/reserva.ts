@@ -1,5 +1,8 @@
-import type { Movimentacao, SaldoMensal } from "./api";
+import type { ContaCadastrada, Movimentacao, SaldoMensal } from "./api";
 import { addMes } from "./formato";
+
+/** Contas correntes marcadas como reserva. */
+export const idsReserva = (contas: ContaCadastrada[]) => new Set(contas.filter((c) => c.papel === "reserva").map((c) => c.id));
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 const ehRendimento = (m: Movimentacao) => m.valor > 0 && /rendiment|remunera/i.test(m.descricao);

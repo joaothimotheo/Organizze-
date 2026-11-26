@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { abaDoCelular, MENU_FIM, MENU_ORGANIZAR, MENU_PRINCIPAL, type Tela } from "../navegacao";
+import { abaDoCelular, MENU_FIM, MENU_ORGANIZAR, MENU_PRINCIPAL, type Tela, type TelaDeMenu } from "../navegacao";
 
 /** Desenhos dos ícones (os mesmos do protótipo), em traço de 1,8 na cor do texto. */
 const DESENHOS = {
@@ -96,7 +96,7 @@ export function Marca({ tamanho = 18 }: { tamanho?: number }) {
   );
 }
 
-function ItemMenu({ item: [id, nome], tela, pendentes }: { item: [Tela, string]; tela: Tela; pendentes: number }) {
+function ItemMenu({ item: [id, nome], tela, pendentes }: { item: [TelaDeMenu, string]; tela: Tela; pendentes: number }) {
   const contador = id === "movimentos" && pendentes > 0 ? pendentes : null;
   return (
     <a href={`#${id}`} title={nome} aria-current={tela === id ? "page" : undefined}>

@@ -1,18 +1,22 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { api, type Brutos, type Divida, type NovaDivida } from "../api";
 import { GraficoParcelas } from "../componentes/Graficos";
 import { PlanoQuitacao } from "../componentes/Plano";
 import { Indicador, Painel, Vazio } from "../componentes/Indicador";
 import JanelaTipoDivida from "../componentes/JanelaTipoDivida";
-import { data, hojeISO, lerValor, MESES_CURTOS, reais } from "../formato";
+import { data, hojeISO, lerValor, MESES, MESES_CURTOS, reais } from "../formato";
 import {
   depoisDoSaldoInformado,
   informada,
   juntarDividas,
+  mesDaProjecao,
   ordemSugerida,
   parcelasCartao,
-  parcelasInformadas,
+  parcelasAtivas,
+  parceladasAtivas,
+  parcelasPorFatura,
   pct,
+  projetar,
   resumo,
   simularAdiantar,
   sugestoesPagamento,
@@ -82,7 +86,99 @@ function paraForm(d: Divida): Form {
   };
 }
 
-export default function Dividas({ brutos, aoMudar }: { brutos: Brutos; aoMudar: () => Promise<void> }) {
+/** Segue o mês do topo: num mês à frente mostra a projeção; no atual ou num passado, a tela de hoje. */
+export default function Dividas({ brutos, aoMudar, ano, mes }: { brutos: Brutos; aoMudar: () => Promise<void>; ano: number; mes: number | null }) {
+  const hoje = hojeISO();
+  const alvo = mesDaProjecao(ano, mes, hoje);
+  if (alvo) return <ProjecaoDividas brutos={brutos} mes={alvo} hoje={hoje} />;
+  const passado = `${ano}-${String(mes ?? 12).padStart(2, "0")}` < hoje.slice(0, 7);
+  return <DividasHoje brutos={brutos} aoMudar={aoMudar} aviso={passado ? "Para ver o futuro, escolha um mês à frente." : null} />;
+}
+
+/** "2027-03" → "março" e "março/2027". */
+const nomeMes = (comp: string) => MESES[Number(comp.slice(5, 7)) - 1];
+
+/** Um bloco de dívidas de um tipo: o nome, o total até o fim e as linhas. */
+function GrupoTipo({ nome, ds, linha, rodape }: { nome: string; ds: DividaVista[]; linha: (d: DividaVista) => ReactNode; rodape?: ReactNode }) {
+  return (
+    <section className="dv-grupo" aria-label={nome}>
+      <header>
+        <h3>{nome}</h3>
+        <span className="num">{ds.length ? reais(ds.reduce((s, d) => s + d.ateOFim, 0)) : "nenhuma ainda"}</span>
+      </header>
+      {ds.map(linha)}
+      {rodape}
+    </section>
+  );
+}
+
+function ProjecaoDividas({ brutos, mes, hoje }: { brutos: Brutos; mes: string; hoje: string }) {
+  const [aberta, setAberta] = useState<string | null>(null);
+  const p = projetar(brutos, mes, hoje);
+  const nome = nomeMes(mes);
+  const vistas = p.itens.map((i) => i.vista);
+  const tipos = [...TIPOS_PADRAO, ...(brutos.dividasTipos ?? [])].filter((t) => vistas.some((v) => v.tipo === t.id));
+  // Parcelas do mês escolhido em diante; quem ficou sem nenhuma já terminou.
+  const parceladas = parceladasAtivas(brutos)
+    .map((x) => ({ ...x, meses: x.meses.filter((m) => m >= mes) }))
+    .filter((x) => x.meses.length > 0);
+  const faturas = parcelasPorFatura(brutos).filter(([m]) => m >= mes);
+  // A última parcela no próprio mês escolhido ainda entra em "Parcelas de <mês>"; as demais já estavam quitadas antes.
+  const ultimaNoMes = p.quitadas.filter((q) => q.quitadaEm === mes);
+  const antes = p.quitadas.filter((q) => q.quitadaEm !== mes);
+  return (
+    <>
+      <p className="aviso-vencido" role="note">
+        Projeção: supõe parcelas pagas em dia.
+      </p>
+      <section className="kpis dv-kpis" aria-label={`Projeção das dívidas em ${nome}/${mes.slice(0, 4)}`}>
+        <Indicador rotulo="Você ainda vai dever" valor={p.deve} detalhe={`hoje: ${reais(p.deveHoje)}`} />
+        <Indicador
+          rotulo={`Parcelas de ${nome}`}
+          valor={p.parcelasDoMes}
+          detalhe={p.peso === null ? `em ${nome}/${mes.slice(0, 4)}` : `${Math.round(p.peso * 100)}% do salário`}
+        />
+      </section>
+      {ultimaNoMes.length > 0 && (
+        <p className="note">
+          Última parcela em {nome}/{mes.slice(0, 4)}: {ultimaNoMes.map((q) => `${q.divida.nome} (${reais(q.divida.parcela ?? 0)})`).join(", ")}.
+        </p>
+      )}
+      {antes.length > 0 && (
+        <p className="note">Quitadas até lá: {antes.map((q) => `${q.divida.nome} (${mesAnoLongo(q.quitadaEm)})`).join(", ")}.</p>
+      )}
+      <section className="dv-corpo">
+        <div className="dv-lista">
+          {tipos.length ? (
+            tipos.map((t) => (
+              <GrupoTipo
+                key={t.id}
+                nome={t.nome}
+                ds={vistas.filter((v) => v.tipo === t.id)}
+                linha={(d) => (
+                  <LinhaDivida key={d.id} d={d} hoje={`${mes}-01`} aberta={aberta === d.id} aoAbrir={() => setAberta(aberta === d.id ? null : d.id)} brutos={brutos} somenteLeitura />
+                )}
+              />
+            ))
+          ) : (
+            <Vazio titulo={`Nenhuma dívida em aberto em ${nome}`}>Tudo o que está cadastrado terá sido quitado até lá.</Vazio>
+          )}
+        </div>
+      </section>
+      <section className="grid">
+        <Painel largo titulo="Quando fico livre das dívidas" descricao="Uma estimativa com as parcelas, as dívidas sem parcelas, o que você deve a pessoas e a sua primeira meta.">
+          <p className="note">Conta a partir de {nome}/{mes.slice(0, 4)}, incluindo as parcelas dele.</p>
+          <PlanoQuitacao brutos={brutos} parceladas={parceladas} inicio={mes} />
+        </Painel>
+        <Painel titulo="Parcelas já comprometidas" descricao="Quanto de cada fatura futura já está ocupado por parcelas.">
+          <GraficoParcelas meses={faturas} />
+        </Painel>
+      </section>
+    </>
+  );
+}
+
+function DividasHoje({ brutos, aoMudar, aviso }: { brutos: Brutos; aoMudar: () => Promise<void>; aviso: string | null }) {
   const [form, setForm] = useState<Form>(formVazio);
   const [editando, setEditando] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -106,11 +202,9 @@ export default function Dividas({ brutos, aoMudar }: { brutos: Brutos; aoMudar: 
 
   // Parcelas por mês (gráfico e plano), como antes: compras do cartão e dívidas parceladas cadastradas.
   const pc = parcelasCartao(brutos);
-  const ativas = [...pc, ...parcelasInformadas(brutos)].filter((p) => p.restantes > 0);
+  const ativas = parcelasAtivas(brutos, pc);
   const terminaram = pc.filter((p) => p.restantes === 0);
-  const comprometido: Record<string, number> = {};
-  ativas.forEach((p) => p.meses.forEach((m) => (comprometido[m] = (comprometido[m] ?? 0) + p.valor)));
-  const meses = Object.entries(comprometido).sort((a, b) => a[0].localeCompare(b[0]));
+  const meses = parcelasPorFatura(brutos);
 
   const faturas = brutos.documentos.filter((d) => d.tipo === "fatura_cartao").sort((a, b) => (a.competencia ?? "").localeCompare(b.competencia ?? ""));
   const ultFatura = ultimo(faturas);
@@ -220,6 +314,11 @@ export default function Dividas({ brutos, aoMudar }: { brutos: Brutos; aoMudar: 
 
   return (
     <>
+      {aviso && (
+        <p className="aviso-vencido" role="note">
+          {aviso}
+        </p>
+      )}
       {sugestoes.length > 0 && (
         <section className="dv-avisos" aria-label="Pagamentos achados no banco">
           {sugestoes.map((s) => (
@@ -276,42 +375,42 @@ export default function Dividas({ brutos, aoMudar }: { brutos: Brutos; aoMudar: 
 
       <section className="grid dv-corpo">
         <div className="dv-lista">
-          {mostrar.map((t) => {
-            const ds = vistas.filter((v) => v.tipo === t.id);
-            return (
-              <section key={t.id} className="dv-grupo" aria-label={t.nome}>
-                <header>
-                  <h3>{t.nome}</h3>
-                  <span className="num">{ds.length ? reais(ds.reduce((s, d) => s + d.ateOFim, 0)) : "nenhuma ainda"}</span>
-                </header>
-                {ds.map((d) => (
-                  <LinhaDivida
-                    key={d.id}
-                    d={d}
-                    hoje={hoje}
-                    aberta={aberta === d.id}
-                    aoAbrir={() => setAberta(aberta === d.id ? null : d.id)}
-                    brutos={brutos}
-                    parcelamento={d.origem === "cartao" ? pc.find((p) => `cartao:${p.chave}` === d.id) : undefined}
-                    confirmando={confirmarExclusao === d.id}
-                    aoEditar={editar}
-                    aoExcluir={excluir}
-                    aoMudar={aoMudar}
-                  />
-                ))}
-                {t.id === "cartao" && terminaram.length > 0 && (
-                  <p className="note">Terminaram na última fatura: {terminaram.map((p) => p.descricao + (p.total && p.total > 1 ? ` (${p.total}x)` : "")).join(", ")}.</p>
-                )}
-                {t.id === "cartao" && conferir && ultFatura && (
-                  <p className="note">
-                    Conferência: a fatura com vencimento em {data(ultFatura.vencimento)} informa {reais(ultFatura.parcelas_a_vencer ?? 0)} em compras parceladas a vencer; a soma das
-                    compras acima dá {reais(somaCompras)}
-                    {somaAnuidade ? `, mais ${reais(somaAnuidade)} da anuidade parcelada.` : "."}
-                  </p>
-                )}
-              </section>
-            );
-          })}
+          {mostrar.map((t) => (
+            <GrupoTipo
+              key={t.id}
+              nome={t.nome}
+              ds={vistas.filter((v) => v.tipo === t.id)}
+              linha={(d) => (
+                <LinhaDivida
+                  key={d.id}
+                  d={d}
+                  hoje={hoje}
+                  aberta={aberta === d.id}
+                  aoAbrir={() => setAberta(aberta === d.id ? null : d.id)}
+                  brutos={brutos}
+                  parcelamento={d.origem === "cartao" ? pc.find((p) => `cartao:${p.chave}` === d.id) : undefined}
+                  confirmando={confirmarExclusao === d.id}
+                  aoEditar={editar}
+                  aoExcluir={excluir}
+                  aoMudar={aoMudar}
+                />
+              )}
+              rodape={
+                <>
+                  {t.id === "cartao" && terminaram.length > 0 && (
+                    <p className="note">Terminaram na última fatura: {terminaram.map((p) => p.descricao + (p.total && p.total > 1 ? ` (${p.total}x)` : "")).join(", ")}.</p>
+                  )}
+                  {t.id === "cartao" && conferir && ultFatura && (
+                    <p className="note">
+                      Conferência: a fatura com vencimento em {data(ultFatura.vencimento)} informa {reais(ultFatura.parcelas_a_vencer ?? 0)} em compras parceladas a vencer; a soma das
+                      compras acima dá {reais(somaCompras)}
+                      {somaAnuidade ? `, mais ${reais(somaAnuidade)} da anuidade parcelada.` : "."}
+                    </p>
+                  )}
+                </>
+              }
+            />
+          ))}
         </div>
         <div className="dv-lado">
           <Painel titulo="E se eu adiantar?" descricao={alvo ? `O valor vai para a dívida com juro mais caro: ${alvo.nome}.` : "O valor vai para a dívida com juro mais caro."}>
@@ -584,6 +683,7 @@ function LinhaDivida({
   aoEditar,
   aoExcluir,
   aoMudar,
+  somenteLeitura = false,
 }: {
   d: DividaVista;
   hoje: string;
@@ -591,10 +691,12 @@ function LinhaDivida({
   aoAbrir: () => void;
   brutos: Brutos;
   parcelamento?: Parcelamento;
-  confirmando: boolean;
-  aoEditar: (d: Divida) => void;
-  aoExcluir: (id: string) => void;
-  aoMudar: () => Promise<void>;
+  confirmando?: boolean;
+  aoEditar?: (d: Divida) => void;
+  aoExcluir?: (id: string) => void;
+  aoMudar?: () => Promise<void>;
+  /** Na projeção: sem editar, excluir nem ligar pagamento; o detalhe mostra só os pagamentos. `hoje` é o dia 1 do mês escolhido. */
+  somenteLeitura?: boolean;
 }) {
   const etiqueta = textoEtiqueta(d);
   const original = d.origem === "cadastrada" ? brutos.dividas.find((x) => x.id === d.id) : undefined;
@@ -606,8 +708,14 @@ function LinhaDivida({
         ? `${d.pagas} de ${d.total} pagas · ${reais(d.parcela)} por mês`
         : `${plural(d.restantes, "parcela", "parcelas")} de ${reais(d.parcela)} faltando`
       : "Valor em aberto";
-  const vencida = d.parcela === null && original?.vencimento_original && original.vencimento_original < hoje ? original.vencimento_original : null;
-  const direita = d.proxima
+  const vencida = !somenteLeitura && d.parcela === null && original?.vencimento_original && original.vencimento_original < hoje ? original.vencimento_original : null;
+  const mesEscolhido = hoje.slice(0, 7);
+  const direita =
+    d.proxima && somenteLeitura
+      ? d.proxima.data.slice(0, 7) === mesEscolhido
+        ? `Parcela de ${nomeMes(mesEscolhido)}: ${reais(d.proxima.valor)}`
+        : `Próxima: ${reais(d.proxima.valor)} em ${dataParcela(d.proxima.data)}`
+      : d.proxima
     ? `${d.proxima.data.length === 10 && d.proxima.data < hoje ? "Venceu" : "Próxima"}: ${reais(d.proxima.valor)} em ${dataParcela(d.proxima.data)}`
     : d.parcela === null
       ? vencida
@@ -622,6 +730,7 @@ function LinhaDivida({
   // (os de até o último saldo informado já estão descontados dele e não precisam baixar).
   const pagos = new Set((original?.pagamentos ?? []).map((p) => p.lancamento_id));
   const ligadoAntes =
+    !somenteLeitura &&
     !!original && brutos.movimentacoes.some((m) => m.vinculo?.tipo === "divida" && m.vinculo.id === d.id && !pagos.has(m.id) && depoisDoSaldoInformado(original, m.data));
 
   return (
@@ -646,6 +755,8 @@ function LinhaDivida({
       </button>
       {aberta && (
         <div className="dv-det" id={idDet}>
+          {!somenteLeitura && (
+            <>
           <div className="dv-minis">
             <div className="dv-mini">
               <small>Para quitar hoje</small>
@@ -665,6 +776,8 @@ function LinhaDivida({
           {original && ((original.nome && original.credor !== original.nome) || original.obs) && (
             <p className="note">{[original.nome && original.credor !== original.nome ? `Credor: ${original.credor}` : "", original.obs ?? ""].filter(Boolean).join(" · ")}</p>
           )}
+            </>
+          )}
           <div className="dv-sec">Pagamentos</div>
           {d.pagamentos.length ? (
             <ul className="dv-pagamentos">
@@ -682,7 +795,7 @@ function LinhaDivida({
             <p className="note">Nenhum pagamento ainda.</p>
           )}
           {ligadoAntes && <p className="note">Ligou um lançamento antes desta versão? Desligue e ligue de novo em Movimentos para contar a parcela.</p>}
-          {original && informada(original) && (
+          {!somenteLeitura && original && informada(original) && aoEditar && aoExcluir && (
             <div className="row">
               <button type="button" className="del" onClick={() => aoEditar(original)}>
                 Editar
@@ -692,13 +805,13 @@ function LinhaDivida({
               </button>
             </div>
           )}
-          {parcelamento && (
+          {!somenteLeitura && parcelamento && aoMudar && (
             <>
               {parcelamento.noBanco && <p className="note">No banco: {parcelamento.noBanco}</p>}
               <NomeParcelamento p={parcelamento} aoMudar={aoMudar} />
             </>
           )}
-          {d.origem === "pessoa" && (
+          {!somenteLeitura && d.origem === "pessoa" && (
             <a className="btn-link dv-pessoas" href="#pessoas">
               Ver e registrar pagamentos em Pessoas
             </a>

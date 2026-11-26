@@ -1,0 +1,523 @@
+{
+  "lugar": [
+    {
+      "entrada": "NETFLIX.COM 02/12",
+      "saida": "NETFLIX COM"
+    },
+    {
+      "entrada": "UBER *TRIP 12/03",
+      "saida": "UBER TRIP"
+    },
+    {
+      "entrada": "LOJA XYZ PARC 03/10",
+      "saida": "LOJA XYZ"
+    },
+    {
+      "entrada": "12345",
+      "saida": "12345"
+    },
+    {
+      "entrada": "  Padaria   do  Zé - 10 ",
+      "saida": "PADARIA DO ZÉ"
+    },
+    {
+      "entrada": "MERCADO_LIVRE*PRODUTO 5/6",
+      "saida": "MERCADO LIVRE PRODUTO"
+    },
+    {
+      "entrada": "ação café 7",
+      "saida": "AÇÃO CAFÉ"
+    },
+    {
+      "entrada": "SPOTIFY",
+      "saida": "SPOTIFY"
+    }
+  ],
+  "nome_limpo": [
+    {
+      "entrada": "DL GOOGLE YOUTUB",
+      "saida": "Youtub"
+    },
+    {
+      "entrada": "EBN SPOTIFY",
+      "saida": "Spotify"
+    },
+    {
+      "entrada": "NETFLIX COM",
+      "saida": "Netflix com"
+    },
+    {
+      "entrada": "PAGSEGURO MP APPLE COM BILL",
+      "saida": "Apple com bill"
+    },
+    {
+      "entrada": "IFD IFOOD CLUBE",
+      "saida": "Clube"
+    },
+    {
+      "entrada": "DL GOOGLE",
+      "saida": "Google"
+    },
+    {
+      "entrada": "PAYPAL",
+      "saida": "Paypal"
+    },
+    {
+      "entrada": "DM GOOGLE  DRIVE",
+      "saida": "Drive"
+    }
+  ],
+  "sugestoes": [
+    {
+      "nome": "assinatura por categoria",
+      "movs": [
+        {
+          "id": "1",
+          "data": "2026-11-05",
+          "descricao": "SPOTIFY AB",
+          "valor": -21.9,
+          "natureza": "despesa",
+          "categoria": "assinaturas",
+          "conta_id": "c1"
+        }
+      ],
+      "fixas": [],
+      "mes_atual": "2026-11",
+      "ignoradas": [],
+      "categorias": [
+        {
+          "id": "g-assin",
+          "nome": "Assinaturas"
+        }
+      ],
+      "chaves_esperadas": [
+        "SPOTIFY AB"
+      ]
+    },
+    {
+      "nome": "assinatura por categoria nova (id do grupo)",
+      "movs": [
+        {
+          "id": "1",
+          "data": "2026-11-05",
+          "descricao": "HBO MAX",
+          "valor": -34.9,
+          "natureza": "despesa",
+          "categoria": "g-assin",
+          "conta_id": "c1"
+        }
+      ],
+      "fixas": [],
+      "mes_atual": "2026-11",
+      "ignoradas": [],
+      "categorias": [
+        {
+          "id": "g-assin",
+          "nome": "Assinaturas"
+        }
+      ],
+      "chaves_esperadas": [
+        "HBO MAX"
+      ]
+    },
+    {
+      "nome": "recorrência fixa marcada",
+      "movs": [
+        {
+          "id": "1",
+          "data": "2026-11-08",
+          "descricao": "ACADEMIA TOP",
+          "valor": -99,
+          "natureza": "despesa",
+          "categoria": "a_classificar",
+          "conta_id": "c1",
+          "recorrencia": "fixa"
+        }
+      ],
+      "fixas": [],
+      "mes_atual": "2026-11",
+      "ignoradas": [],
+      "categorias": [],
+      "chaves_esperadas": [
+        "ACADEMIA TOP"
+      ]
+    },
+    {
+      "nome": "repetida em 3 de 4 meses com até 10% de variação",
+      "movs": [
+        {
+          "id": "1",
+          "data": "2026-11-03",
+          "descricao": "STREAMING PLUS",
+          "valor": -50,
+          "natureza": "despesa",
+          "categoria": "a_classificar",
+          "conta_id": "c1"
+        },
+        {
+          "id": "2",
+          "data": "2026-10-03",
+          "descricao": "STREAMING PLUS",
+          "valor": -48,
+          "natureza": "despesa",
+          "categoria": "a_classificar",
+          "conta_id": "c1"
+        },
+        {
+          "id": "3",
+          "data": "2026-09-03",
+          "descricao": "STREAMING PLUS",
+          "valor": -46,
+          "natureza": "despesa",
+          "categoria": "a_classificar",
+          "conta_id": "c1"
+        },
+        {
+          "id": "4",
+          "data": "2026-08-30",
+          "descricao": "STREAMING PLUS",
+          "valor": -45.5,
+          "natureza": "despesa",
+          "categoria": "a_classificar",
+          "conta_id": "c1"
+        }
+      ],
+      "fixas": [],
+      "mes_atual": "2026-11",
+      "ignoradas": [],
+      "categorias": [],
+      "chaves_esperadas": [
+        "STREAMING PLUS"
+      ]
+    },
+    {
+      "nome": "variação acima de 10% não é fixa",
+      "movs": [
+        {
+          "id": "1",
+          "data": "2026-11-03",
+          "descricao": "MERCADO BOM",
+          "valor": -200,
+          "natureza": "despesa",
+          "categoria": "a_classificar",
+          "conta_id": "c1"
+        },
+        {
+          "id": "2",
+          "data": "2026-10-03",
+          "descricao": "MERCADO BOM",
+          "valor": -120,
+          "natureza": "despesa",
+          "categoria": "a_classificar",
+          "conta_id": "c1"
+        },
+        {
+          "id": "3",
+          "data": "2026-09-03",
+          "descricao": "MERCADO BOM",
+          "valor": -310,
+          "natureza": "despesa",
+          "categoria": "a_classificar",
+          "conta_id": "c1"
+        }
+      ],
+      "fixas": [],
+      "mes_atual": "2026-11",
+      "ignoradas": [],
+      "categorias": [],
+      "chaves_esperadas": []
+    },
+    {
+      "nome": "só 2 meses não basta",
+      "movs": [
+        {
+          "id": "1",
+          "data": "2026-11-03",
+          "descricao": "CLUBE X",
+          "valor": -50,
+          "natureza": "despesa",
+          "categoria": "a_classificar",
+          "conta_id": "c1"
+        },
+        {
+          "id": "2",
+          "data": "2026-10-03",
+          "descricao": "CLUBE X",
+          "valor": -50,
+          "natureza": "despesa",
+          "categoria": "a_classificar",
+          "conta_id": "c1"
+        }
+      ],
+      "fixas": [],
+      "mes_atual": "2026-11",
+      "ignoradas": [],
+      "categorias": [],
+      "chaves_esperadas": []
+    },
+    {
+      "nome": "parou de cobrar fica de fora",
+      "movs": [
+        {
+          "id": "1",
+          "data": "2026-09-05",
+          "descricao": "APP VELHO",
+          "valor": -19.9,
+          "natureza": "despesa",
+          "categoria": "assinaturas",
+          "conta_id": "c1"
+        },
+        {
+          "id": "2",
+          "data": "2026-08-05",
+          "descricao": "APP VELHO",
+          "valor": -19.9,
+          "natureza": "despesa",
+          "categoria": "assinaturas",
+          "conta_id": "c1"
+        },
+        {
+          "id": "3",
+          "data": "2026-10-05",
+          "descricao": "APP NOVO",
+          "valor": -9.9,
+          "natureza": "despesa",
+          "categoria": "assinaturas",
+          "conta_id": "c1"
+        }
+      ],
+      "fixas": [],
+      "mes_atual": "2026-11",
+      "ignoradas": [],
+      "categorias": [],
+      "chaves_esperadas": [
+        "APP NOVO"
+      ]
+    },
+    {
+      "nome": "ignorada",
+      "movs": [
+        {
+          "id": "1",
+          "data": "2026-11-05",
+          "descricao": "TINDER",
+          "valor": -39.9,
+          "natureza": "despesa",
+          "categoria": "assinaturas",
+          "conta_id": "c1"
+        },
+        {
+          "id": "2",
+          "data": "2026-11-06",
+          "descricao": "DEEZER",
+          "valor": -21.9,
+          "natureza": "despesa",
+          "categoria": "assinaturas",
+          "conta_id": "c1"
+        }
+      ],
+      "fixas": [],
+      "mes_atual": "2026-11",
+      "ignoradas": [
+        "TINDER"
+      ],
+      "categorias": [],
+      "chaves_esperadas": [
+        "DEEZER"
+      ]
+    },
+    {
+      "nome": "já cadastrada pela busca",
+      "movs": [
+        {
+          "id": "1",
+          "data": "2026-11-05",
+          "descricao": "NETFLIX.COM",
+          "valor": -55.9,
+          "natureza": "despesa",
+          "categoria": "assinaturas",
+          "conta_id": "c1"
+        },
+        {
+          "id": "2",
+          "data": "2026-11-06",
+          "descricao": "AMAZON PRIME",
+          "valor": -14.9,
+          "natureza": "despesa",
+          "categoria": "assinaturas",
+          "conta_id": "c1"
+        }
+      ],
+      "fixas": [
+        {
+          "id": "f1",
+          "nome": "Netflix",
+          "valor": 55.9,
+          "forma": "cartao",
+          "ativa": true,
+          "busca": "netflix"
+        }
+      ],
+      "mes_atual": "2026-11",
+      "ignoradas": [],
+      "categorias": [],
+      "chaves_esperadas": [
+        "AMAZON PRIME"
+      ]
+    },
+    {
+      "nome": "parcela não entra",
+      "movs": [
+        {
+          "id": "1",
+          "data": "2026-11-05",
+          "descricao": "LOJA PARC 03/10",
+          "valor": -120,
+          "natureza": "despesa",
+          "categoria": "assinaturas",
+          "conta_id": "c1",
+          "parcela": {
+            "atual": 3,
+            "total": 10
+          }
+        }
+      ],
+      "fixas": [],
+      "mes_atual": "2026-11",
+      "ignoradas": [],
+      "categorias": [],
+      "chaves_esperadas": []
+    },
+    {
+      "nome": "receita e estorno não entram",
+      "movs": [
+        {
+          "id": "1",
+          "data": "2026-11-05",
+          "descricao": "SALARIO",
+          "valor": 5000,
+          "natureza": "receita",
+          "categoria": "assinaturas",
+          "conta_id": "c1"
+        },
+        {
+          "id": "2",
+          "data": "2026-11-06",
+          "descricao": "ESTORNO",
+          "valor": -10,
+          "natureza": "estorno",
+          "categoria": "assinaturas",
+          "conta_id": "c1"
+        }
+      ],
+      "fixas": [],
+      "mes_atual": "2026-11",
+      "ignoradas": [],
+      "categorias": [],
+      "chaves_esperadas": []
+    },
+    {
+      "nome": "competência vale mais que a data e a virada de ano",
+      "movs": [
+        {
+          "id": "1",
+          "data": "2026-01-02",
+          "descricao": "SEGURO AUTO",
+          "valor": -300,
+          "natureza": "despesa",
+          "categoria": "a_classificar",
+          "conta_id": "c1",
+          "competencia": "2025-12"
+        },
+        {
+          "id": "2",
+          "data": "2025-12-02",
+          "descricao": "SEGURO AUTO",
+          "valor": -300,
+          "natureza": "despesa",
+          "categoria": "a_classificar",
+          "conta_id": "c1",
+          "competencia": "2025-11"
+        },
+        {
+          "id": "3",
+          "data": "2025-11-02",
+          "descricao": "SEGURO AUTO",
+          "valor": -295,
+          "natureza": "despesa",
+          "categoria": "a_classificar",
+          "conta_id": "c1",
+          "competencia": "2025-10"
+        },
+        {
+          "id": "4",
+          "data": "2026-01-02",
+          "descricao": "OUTRA COISA",
+          "valor": -5,
+          "natureza": "despesa",
+          "categoria": "assinaturas",
+          "conta_id": "c1",
+          "competencia": "2025-12"
+        }
+      ],
+      "fixas": [],
+      "mes_atual": "2026-01",
+      "ignoradas": [],
+      "categorias": [],
+      "chaves_esperadas": [
+        "SEGURO AUTO",
+        "OUTRA COISA"
+      ]
+    },
+    {
+      "nome": "ordenação por meses e valor",
+      "movs": [
+        {
+          "id": "1",
+          "data": "2026-11-02",
+          "descricao": "ASSIN A",
+          "valor": -10,
+          "natureza": "despesa",
+          "categoria": "assinaturas",
+          "conta_id": "c1"
+        },
+        {
+          "id": "2",
+          "data": "2026-11-02",
+          "descricao": "ASSIN B",
+          "valor": -80,
+          "natureza": "despesa",
+          "categoria": "assinaturas",
+          "conta_id": "c1"
+        },
+        {
+          "id": "3",
+          "data": "2026-11-02",
+          "descricao": "ASSIN C",
+          "valor": -30,
+          "natureza": "despesa",
+          "categoria": "assinaturas",
+          "conta_id": "c1"
+        },
+        {
+          "id": "4",
+          "data": "2026-10-02",
+          "descricao": "ASSIN C",
+          "valor": -30,
+          "natureza": "despesa",
+          "categoria": "assinaturas",
+          "conta_id": "c1"
+        }
+      ],
+      "fixas": [],
+      "mes_atual": "2026-11",
+      "ignoradas": [],
+      "categorias": [],
+      "chaves_esperadas": [
+        "ASSIN C",
+        "ASSIN B",
+        "ASSIN A"
+      ]
+    }
+  ]
+}

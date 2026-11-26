@@ -46,8 +46,8 @@ export function gravarPorMes(v: string) {
   }
 }
 
-/** Quando dá para quitar tudo e juntar a meta, com o que você consegue separar por mês. */
-export function PlanoQuitacao({ brutos, parceladas }: { brutos: Brutos; parceladas: Parcelada[] }) {
+/** Quando dá para quitar tudo e juntar a meta, com o que você consegue separar por mês. `inicio` ("AAAA-MM") muda o mês de partida; o padrão é o mês seguinte ao de hoje. */
+export function PlanoQuitacao({ brutos, parceladas, inicio }: { brutos: Brutos; parceladas: Parcelada[]; inicio?: string }) {
   const mesAtual = hojeISO().slice(0, 7);
   const sugestao = useMemo(() => sobraMediaDisponivel(brutos.movimentacoes, mesAtual, brutos.holerites), [brutos.movimentacoes, brutos.holerites, mesAtual]);
   const [texto, setTexto] = useState(() => lerMensal() ?? String(sugestao));
@@ -63,7 +63,7 @@ export function PlanoQuitacao({ brutos, parceladas }: { brutos: Brutos; parcelad
   const avista: AVista[] = dividasAVista(brutos);
   const reserva = saldoReserva(sync?.ultima_ok?.contas, idsReserva(brutos.contas));
   const meta = brutos.metas[0] ? { nome: brutos.metas[0].nome, falta: Math.max(0, brutos.metas[0].valor_alvo - guardadoNaMeta(brutos.metas[0], reserva)) } : null;
-  const p = simular(parceladas, avista, meta, porMes, addMes(mesAtual, 1));
+  const p = simular(parceladas, avista, meta, porMes, inicio ?? addMes(mesAtual, 1));
 
   function mudar(v: string) {
     setTexto(v);

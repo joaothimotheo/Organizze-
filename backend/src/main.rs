@@ -10,6 +10,7 @@
 //! - `FINANCEIRO_SEGREDO`: chave das sessões. Algum login é obrigatório fora da máquina local.
 
 mod armazenamento;
+mod avisos;
 mod arquivo_env;
 mod auth;
 mod bcb;
@@ -19,6 +20,7 @@ mod dividas;
 mod fixas;
 mod fonte;
 mod metas;
+mod orcamentos;
 mod emprestimos;
 mod importar;
 mod lancamentos;
@@ -26,6 +28,7 @@ mod manuais;
 mod modelo;
 mod pdf;
 mod pluggy;
+mod push;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -38,7 +41,7 @@ use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
-use chrono::{DateTime, Datelike, FixedOffset, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Utc};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
@@ -47,7 +50,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
-use armazenamento::{arquivo_valido, Armazenamento, ARQUIVOS};
+use armazenamento::{arquivo_publico, Armazenamento, ARQUIVOS};
 use auth::Auth;
 
 /// Uma análise de documento aguardando sua revisão (fica só na memória por 1 hora).
@@ -139,11 +142,17 @@ struct FiltroFonte {
     fonte: Option<String>,
 }
 
-async fn arquivo(State(app): State<App>, Path(nome): Path<String>, Query(f): Query<FiltroFonte>) -> Res<Value> {
+/// Nome sem `.json`; recusa o que não existe e o que fica só no servidor (`avisos`).
+fn nome_publico(nome: &str) -> Result<&str, Erro> {
     let nome = nome.trim_end_matches(".json");
-    if !arquivo_valido(nome) {
+    if !arquivo_publico(nome) {
         return Err(Erro(StatusCode::NOT_FOUND, format!("arquivo desconhecido: {nome}")));
     }
+    Ok(nome)
+}
+
+async fn arquivo(State(app): State<App>, Path(nome): Path<String>, Query(f): Query<FiltroFonte>) -> Res<Value> {
+    let nome = nome_publico(&nome)?;
     let mut v = app.arm.ler_json(nome).await?;
     if f.fonte.as_deref() == Some("documentos") {
         fonte::so_documentos(nome, &mut v);
@@ -586,6 +595,21 @@ async fn apagar_lancamento(State(app): State<App>, Path(id): Path<String>) -> Re
 
 // ---------- contas fixas ----------
 
+#[derive(Deserialize)]
+struct NovoLimite {
+    /// Limite mensal em reais; nulo ou zero tira o limite.
+    limite: Option<f64>,
+}
+
+/// Define ou tira o limite de gasto mensal de uma categoria.
+async fn definir_limite(State(app): State<App>, Path(categoria): Path<String>, Json(n): Json<NovoLimite>) -> Res<Value> {
+    let _trava = app.escrita.lock().await;
+    let mut arq = app.arm.ler_json("orcamentos").await?;
+    let r = orcamentos::definir(&mut arq, &categoria, n.limite, &agora_txt())?;
+    app.arm.gravar_valor("orcamentos", &arq).await?;
+    Ok(Json(r))
+}
+
 async fn criar_fixa(State(app): State<App>, Json(f): Json<fixas::NovaFixa>) -> Res<Value> {
     let _trava = app.escrita.lock().await;
     let mut arq = app.arm.ler_json("fixas").await?;
@@ -889,13 +913,15 @@ struct PedidoSincronizacao {
 
 async fn sincronizar(State(app): State<App>, pedido: Option<Json<PedidoSincronizacao>>) -> Res<Value> {
     let Some(p) = app.pluggy.as_ref() else {
+        // Sem Pluggy os avisos (contas fixas, assinaturas) continuam valendo.
+        verificar_e_enviar(&app, agora().date_naive(), &agora_txt()).await;
         return Err(Erro(StatusCode::NOT_FOUND, "sincronização com o banco não configurada (PLUGGY_CLIENT_ID, PLUGGY_CLIENT_SECRET e PLUGGY_ITEM_ID)".into()));
     };
     let dias = pedido.and_then(|Json(p)| p.dias);
     if dias.is_some_and(|d| !(1..=366).contains(&d)) {
         return Err(pedido_invalido("dias deve estar entre 1 e 366"));
     }
-    let _trava = app.escrita.lock().await;
+    let trava = app.escrita.lock().await;
     let hoje = agora().date_naive();
     let momento = agora_txt();
     let resultado = pluggy::sincronizar(&app.arm, p, hoje, &momento, dias).await;
@@ -906,6 +932,9 @@ async fn sincronizar(State(app): State<App>, pedido: Option<Json<PedidoSincroniz
     if let Err(e) = pluggy::registrar(&app.arm, execucao, &momento).await {
         tracing::error!("não consegui registrar a sincronização: {e:#}");
     }
+    // A verificação toma a trava por conta própria e solta no envio (rede).
+    drop(trava);
+    verificar_e_enviar(&app, hoje, &momento).await;
     match resultado {
         Ok(r) => {
             tracing::info!("sincronização com a Pluggy concluída (gravou: {})", r["gravou"]);
@@ -924,6 +953,159 @@ async fn estado_sincronizacao(State(app): State<App>) -> Res<Value> {
     let ultima = execucoes.last().cloned();
     let ultima_ok = execucoes.iter().rev().find(|e| e["ok"] == true).cloned();
     Ok(Json(json!({ "configurada": app.pluggy.is_some(), "ultima": ultima, "ultima_ok": ultima_ok })))
+}
+
+// ---------- avisos no celular ----------
+
+/// Depois da sincronização: vê o que vale avisar, marca como enviado e manda aos aparelhos.
+/// Nunca muda o resultado de quem chama; erros só vão para o log (sem endereço nem conteúdo).
+async fn verificar_e_enviar(app: &App, hoje: NaiveDate, agora: &str) {
+    if let Err(e) = verificar_e_enviar_inner(app, hoje, agora).await {
+        tracing::error!("avisos: não consegui verificar/enviar: {e:#}");
+    }
+}
+
+async fn verificar_e_enviar_inner(app: &App, hoje: NaiveDate, agora: &str) -> anyhow::Result<()> {
+    let (chaves, aparelhos, mensagens) = {
+        let _trava = app.escrita.lock().await;
+        let fixas = app.arm.ler_json("fixas").await?;
+        let movs = app.arm.ler_json("movimentacoes").await?;
+        let categorias = app.arm.ler_json("categorias").await?;
+        let sincronizacoes = app.arm.ler_json("sincronizacoes").await?;
+        let orcamentos_arq = app.arm.ler_json("orcamentos").await?;
+        let mut av = app.arm.ler_json("avisos").await?;
+        let antes = av.clone();
+        avisos::garantir_formato(&mut av);
+        let r = avisos::verificar(&avisos::Entrada { fixas: &fixas, movs: &movs, categorias: &categorias, sincronizacoes: &sincronizacoes, avisos: &av, orcamentos: &orcamentos_arq }, hoje);
+        // Marca tudo como enviado já, mesmo sem aparelho: não acumular aviso velho.
+        let mut todas = r.semente.clone();
+        todas.extend(r.enviar.iter().flat_map(|a| a.chaves.clone()));
+        av["cartoes"] = r.cartoes;
+        avisos::registrar_chaves(&mut av, &todas, agora, hoje);
+        if av != antes {
+            app.arm.gravar_valor("avisos", &av).await?;
+        }
+        let mensagens: Vec<Value> = r.enviar.iter().map(avisos::mensagem).collect();
+        (avisos::chaves_vapid(&av), av["aparelhos"].as_array().cloned().unwrap_or_default(), mensagens)
+    };
+    let Some(chaves) = chaves else { return Ok(()) };
+    if mensagens.is_empty() || aparelhos.is_empty() {
+        return Ok(());
+    }
+    let resultados = avisos::enviar_para(&app.http, &chaves, &aparelhos, &mensagens).await;
+    let falhas = resultados.iter().filter(|(_, e)| matches!(e, push::Entrega::Falhou(_))).count();
+    tracing::info!("avisos: {} mensagem(ns) para {} aparelho(s), {} falha(s)", mensagens.len(), aparelhos.len(), falhas);
+    let _trava = app.escrita.lock().await;
+    let mut av = app.arm.ler_json("avisos").await?;
+    let antes = av.clone();
+    avisos::aplicar_entregas(&mut av, &resultados, agora);
+    if av != antes {
+        app.arm.gravar_valor("avisos", &av).await?;
+    }
+    Ok(())
+}
+
+/// Lê `avisos` já com o formato garantido (gera as chaves na primeira vez). Chamar com a trava.
+async fn avisos_prontos(app: &App) -> anyhow::Result<Value> {
+    let mut av = app.arm.ler_json("avisos").await?;
+    if avisos::garantir_formato(&mut av) {
+        app.arm.gravar_valor("avisos", &av).await?;
+    }
+    Ok(av)
+}
+
+async fn ver_avisos(State(app): State<App>) -> Res<Value> {
+    let _trava = app.escrita.lock().await;
+    let av = avisos_prontos(&app).await?;
+    // Nunca devolve o endereço inteiro nem a chave privada.
+    let aparelhos: Vec<Value> = av["aparelhos"]
+        .as_array()
+        .map(|l| l.iter().map(|a| json!({ "id": a["id"], "nome": a["nome"], "criado_em": a["criado_em"], "ultimo_envio": a["ultimo_envio"] })).collect())
+        .unwrap_or_default();
+    Ok(Json(json!({ "chave_publica": av["chaves"]["publica"], "tipos": av["tipos"], "aparelhos": aparelhos })))
+}
+
+#[derive(Deserialize)]
+struct NovoAparelho {
+    endpoint: String,
+    p256dh: String,
+    auth: String,
+    #[serde(default)]
+    nome: String,
+}
+
+async fn cadastrar_aparelho(State(app): State<App>, Json(n): Json<NovoAparelho>) -> Res<Value> {
+    let (endpoint, p256dh, auth) = (n.endpoint.trim(), n.p256dh.trim(), n.auth.trim());
+    if !endpoint.starts_with("https://") || endpoint.len() > 2048 {
+        return Err(pedido_invalido("endpoint deve começar com https://"));
+    }
+    avisos::validar_assinatura(p256dh, auth).map_err(pedido_invalido)?;
+    let nome: String = n.nome.trim().chars().take(80).collect();
+    let nome = if nome.is_empty() { "Aparelho".to_string() } else { nome };
+    let id = avisos::id_do_aparelho(endpoint);
+    let _trava = app.escrita.lock().await;
+    let mut av = avisos_prontos(&app).await?;
+    let lista = av["aparelhos"].as_array_mut().expect("formato garantido");
+    // Mesma assinatura = atualiza.
+    match lista.iter_mut().find(|a| a["id"] == id.as_str()) {
+        Some(a) => {
+            a["p256dh"] = json!(p256dh);
+            a["auth"] = json!(auth);
+            a["nome"] = json!(nome);
+            a["falhas"] = json!(0);
+        }
+        None => lista.push(json!({ "id": id, "endpoint": endpoint, "p256dh": p256dh, "auth": auth, "nome": nome, "criado_em": agora_txt(), "ultimo_envio": null, "falhas": 0 })),
+    }
+    app.arm.gravar_valor("avisos", &av).await?;
+    Ok(Json(json!({ "id": id })))
+}
+
+async fn remover_aparelho(State(app): State<App>, Path(id): Path<String>) -> Res<Value> {
+    let _trava = app.escrita.lock().await;
+    let mut av = avisos_prontos(&app).await?;
+    let lista = av["aparelhos"].as_array_mut().expect("formato garantido");
+    let antes = lista.len();
+    lista.retain(|a| a["id"] != id.as_str());
+    // Idempotente: id desconhecido também devolve ok.
+    if lista.len() != antes {
+        app.arm.gravar_valor("avisos", &av).await?;
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn mudar_tipos_de_aviso(State(app): State<App>, Json(corpo): Json<Value>) -> Res<Value> {
+    let Some(pedido) = corpo.as_object() else { return Err(pedido_invalido("envie um objeto com os tipos")) };
+    let _trava = app.escrita.lock().await;
+    let mut av = avisos_prontos(&app).await?;
+    for t in avisos::TIPOS {
+        if let Some(b) = pedido.get(t).and_then(Value::as_bool) {
+            av["tipos"][t] = json!(b);
+        }
+    }
+    app.arm.gravar_valor("avisos", &av).await?;
+    Ok(Json(av["tipos"].clone()))
+}
+
+async fn testar_avisos(State(app): State<App>) -> Res<Value> {
+    let (chaves, aparelhos) = {
+        let _trava = app.escrita.lock().await;
+        let av = avisos_prontos(&app).await?;
+        (avisos::chaves_vapid(&av), av["aparelhos"].as_array().cloned().unwrap_or_default())
+    };
+    let Some(chaves) = chaves else { return Err(Erro(StatusCode::INTERNAL_SERVER_ERROR, "chaves de aviso ausentes".into())) };
+    if aparelhos.is_empty() {
+        return Ok(Json(json!({ "enviados": 0, "removidos": 0 })));
+    }
+    let mensagem = avisos::mensagem_de_teste();
+    let resultados = avisos::enviar_para(&app.http, &chaves, &aparelhos, &[mensagem]).await;
+    let enviados = resultados.iter().filter(|(_, e)| matches!(e, push::Entrega::Entregue)).count();
+    let _trava = app.escrita.lock().await;
+    let mut av = app.arm.ler_json("avisos").await?;
+    let antes = av["aparelhos"].as_array().map_or(0, Vec::len);
+    avisos::aplicar_entregas(&mut av, &resultados, &agora_txt());
+    let removidos = antes - av["aparelhos"].as_array().map_or(0, Vec::len);
+    app.arm.gravar_valor("avisos", &av).await?;
+    Ok(Json(json!({ "enviados": enviados, "removidos": removidos })))
 }
 
 // Categorias: enquanto `categorias.json` não foi migrado (versão 1), as rotas fazem o mesmo de
@@ -1075,6 +1257,9 @@ async fn sugestoes_de_grupos(State(app): State<App>) -> Res<Value> {
 async fn exportar_backup(State(app): State<App>) -> Result<Response, Erro> {
     let mut arquivos = serde_json::Map::new();
     for (nome, _, _) in ARQUIVOS {
+        if !arquivo_publico(nome) {
+            continue;
+        }
         if let Some(v) = app.arm.ler_valor(nome).await? {
             arquivos.insert(nome.to_string(), v);
         }
@@ -1093,7 +1278,7 @@ async fn restaurar_backup(State(app): State<App>, Json(b): Json<Value>) -> Res<V
     }
     let Some(arquivos) = b["arquivos"].as_object() else { return Err(pedido_invalido("cópia sem arquivos")) };
     for (nome, v) in arquivos {
-        if !arquivo_valido(nome) {
+        if !arquivo_publico(nome) {
             return Err(pedido_invalido(format!("arquivo desconhecido na cópia: {nome}")));
         }
         if !v.is_object() {
@@ -1219,10 +1404,16 @@ fn rotas_do_app(app: App, dir_front: &std::path::Path) -> anyhow::Result<Router>
         .route("/visao-geral", get(visao_geral))
         .route("/fontes", get(fontes))
         .route("/dados/:arquivo", get(arquivo))
+        .route("/avisos", get(ver_avisos))
+        .route("/avisos/aparelhos", post(cadastrar_aparelho))
+        .route("/avisos/aparelhos/:id", delete(remover_aparelho))
+        .route("/avisos/tipos", put(mudar_tipos_de_aviso))
+        .route("/avisos/teste", post(testar_avisos))
         .route("/contas/:id", patch(mudar_papel_conta))
         .route("/metas", post(criar_meta))
         .route("/metas/:id", put(editar_meta).delete(excluir_meta))
         .route("/metas/:id/guardar", post(guardar_na_meta))
+        .route("/orcamentos/:categoria", put(definir_limite))
         .route("/fixas", post(criar_fixa))
         .route("/fixas/ignoradas", post(ignorar_sugestao))
         .route("/fixas/:id", put(editar_fixa).delete(excluir_fixa))
@@ -1481,5 +1672,14 @@ mod testes {
         let mut d = json!({ "id": "d1" });
         aplicar_campos(&mut d, &form(json!({ "parcelas_restantes": 0, "valor_atual": 50.0 })), "t0");
         assert_eq!(d["situacao"], "quitada");
+    }
+
+    #[test]
+    fn dados_avisos_bloqueado() {
+        // `avisos` guarda a chave privada VAPID: nem a rota de dados nem as fontes o expõem.
+        assert_eq!(nome_publico("avisos.json").err().map(|e| e.0), Some(StatusCode::NOT_FOUND));
+        assert_eq!(nome_publico("avisos").err().map(|e| e.0), Some(StatusCode::NOT_FOUND));
+        assert_eq!(nome_publico("metas.json").ok(), Some("metas"));
+        assert!(!armazenamento::arquivo_publico("avisos"));
     }
 }

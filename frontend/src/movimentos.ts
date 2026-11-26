@@ -1,5 +1,5 @@
 /** Lógica da tela Movimentos: endereços, busca, filtros, lista por dia, resumo por grupo e fila do modo rápido. */
-import type { Divida, EdicaoLancamento, Emprestimo, Fixa, Movimentacao, ParteLancamento } from "./api";
+import type { ContaCadastrada, Divida, EdicaoLancamento, Emprestimo, Fixa, Movimentacao, ParteLancamento } from "./api";
 import { ehEntrada, ehGasto, partesDe, semCategoria, type Grupo } from "./grupos";
 import { capitalizar, lerValor, reaisTexto } from "./formato";
 
@@ -349,4 +349,44 @@ export function sobraParte(valorLanc: number, digitado: string): string {
   if (v === null) return "";
   const resto = Math.round(Math.abs(valorLanc) * 100) - Math.round(Math.abs(v) * 100);
   return resto > 0 ? (resto / 100).toFixed(2).replace(".", ",") : "";
+}
+
+export type TipoOrigem = "credito" | "debito" | "reserva" | "dinheiro" | "outra";
+
+export interface Origem {
+  tipo: TipoOrigem;
+  /** Para filtrar: o tipo, ou tipo:conta_id quando o rótulo leva a instituição. */
+  chave: string;
+  rotulo: string;
+  /** Nome completo da conta, para title/aria. */
+  completo: string;
+}
+
+/** Nome da instituição para mostrar: nulo se for o genérico do Pluggy; tira o código do banco no fim, "(33)". */
+export function instituicaoUtil(c: { instituicao?: string | null }): string | null {
+  const nome = (c.instituicao ?? "").replace(/\s*\(\d+\)\s*$/, "").trim();
+  return nome && !nome.includes("Pluggy") ? nome : null;
+}
+
+/** De onde saiu o lançamento: crédito, débito, reserva (pela instituição) ou dinheiro. */
+export function origemDe(
+  contaId: string | null | undefined,
+  contas: ContaCadastrada[],
+  nomeCompleto: (c: ContaCadastrada) => string,
+): Origem {
+  if (!contaId || contaId === "dinheiro") return { tipo: "dinheiro", chave: "dinheiro", rotulo: "Dinheiro", completo: "Dinheiro" };
+  const conta = contas.find((c) => c.id === contaId);
+  if (!conta) return { tipo: "outra", chave: "outra", rotulo: "Conta", completo: contaId };
+  const completo = nomeCompleto(conta);
+  if (conta.papel === "reserva") {
+    return { tipo: "reserva", chave: `reserva:${conta.id}`, rotulo: instituicaoUtil(conta) || "Reserva", completo };
+  }
+  const tipo: TipoOrigem = conta.tipo === "cartao" ? "credito" : "debito";
+  const base = tipo === "credito" ? "Crédito" : "Débito";
+  const mesmas = contas.filter((c) => c.papel !== "reserva" && (c.tipo === "cartao") === (tipo === "credito"));
+  if (mesmas.length > 1) {
+    const inst = instituicaoUtil(conta);
+    return { tipo, chave: `${tipo}:${conta.id}`, rotulo: inst ? `${base} ${inst}` : base, completo };
+  }
+  return { tipo, chave: tipo, rotulo: base, completo };
 }

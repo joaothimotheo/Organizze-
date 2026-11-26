@@ -4,7 +4,7 @@ import { SeletorCategoria } from "../componentes/SeletorCategoria";
 import { Painel, Vazio } from "../componentes/Indicador";
 import { tituloDe } from "../componentes/NomeLancamento";
 import { categoriaDaFixa, cobradaDepois, FORMAS, nomeForma, resumo, situacao, sugestoes, type Sugestao } from "../fixas";
-import { data, hojeISO, lerValor, mesAno, nomeCategoria, reais } from "../formato";
+import { data, hojeISO, lerValor, MESES, mesAno, nomeCategoria, reais } from "../formato";
 
 const erroDe = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const noCampo = (v: number | null | undefined) => (v == null ? "" : v.toFixed(2).replace(".", ","));
@@ -20,10 +20,16 @@ interface Form {
 // Categoria vazia = o padrão de `categoriaDaFixa` (depende de já ter migrado).
 const vazio: Form = { nome: "", valor: "", dia: "", forma: "pix", categoria: "", busca: "" };
 
-export default function Fixas({ brutos, aoMudar }: { brutos: Brutos; aoMudar: () => Promise<void> }) {
+export default function Fixas({ brutos, aoMudar, ano, mes: mesTopo }: { brutos: Brutos; aoMudar: () => Promise<void>; ano: number; mes: number | null }) {
   const hoje = hojeISO();
-  const mes = hoje.slice(0, 7);
+  const mesAtual = hoje.slice(0, 7);
+  // Mês do topo; "ano inteiro" (sem mês) usa o mês atual.
+  const mesVisto = mesTopo === null ? mesAtual : `${ano}-${String(mesTopo).padStart(2, "0")}`;
+  // Dia de hoje no mês atual; 32 num mês passado (tudo já venceu); 0 num futuro (tudo a vencer).
   const diaHoje = Number(hoje.slice(8, 10));
+  const diaVisto = mesVisto === mesAtual ? diaHoje : mesVisto < mesAtual ? 32 : 0;
+  const noAtual = mesVisto === mesAtual;
+  const nomeVisto = `${MESES[Number(mesVisto.slice(5, 7)) - 1]}/${mesVisto.slice(0, 4)}`;
   const [form, setForm] = useState<Form>(vazio);
   const [editando, setEditando] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -32,13 +38,13 @@ export default function Fixas({ brutos, aoMudar }: { brutos: Brutos; aoMudar: ()
   const migrado = !!brutos.categoriasMigradas;
   const categoriaDe = (c: string | null | undefined) => categoriaDaFixa(c, migrado);
   const tipoConta = useMemo(() => new Map(brutos.contas.map((c) => [c.id, c.tipo ?? ""])), [brutos.contas]);
-  const r = resumo(brutos.fixas, brutos.movimentacoes, mes, diaHoje);
+  const r = resumo(brutos.fixas, brutos.movimentacoes, mesVisto, diaVisto);
   const ordem = (a: Fixa, b: Fixa) => (a.dia ?? 99) - (b.dia ?? 99) || a.nome.localeCompare(b.nome);
   const lista = brutos.fixas.filter((f) => f.ativa).sort(ordem);
   const canceladas = brutos.fixas.filter((f) => !f.ativa).sort((a, b) => (b.cancelada_em ?? "").localeCompare(a.cancelada_em ?? "") || ordem(a, b));
   const sug = useMemo(
-    () => sugestoes(brutos.movimentacoes, brutos.fixas, mes, tipoConta, brutos.fixasIgnoradas, brutos.categorias),
-    [brutos.movimentacoes, brutos.fixas, mes, tipoConta, brutos.fixasIgnoradas, brutos.categorias],
+    () => sugestoes(brutos.movimentacoes, brutos.fixas, mesAtual, tipoConta, brutos.fixasIgnoradas, brutos.categorias),
+    [brutos.movimentacoes, brutos.fixas, mesAtual, tipoConta, brutos.fixasIgnoradas, brutos.categorias],
   );
   const [ignorando, setIgnorando] = useState<string | null>(null);
   const [erroSug, setErroSug] = useState<string | null>(null);
@@ -114,7 +120,7 @@ export default function Fixas({ brutos, aoMudar }: { brutos: Brutos; aoMudar: ()
 
   return (
     <section className="grid">
-      <div className="agora quatro wide" role="group" aria-label={`Contas fixas em ${mesAno(mes)}`}>
+      <div className="agora quatro wide" role="group" aria-label={noAtual ? `Contas fixas em ${mesAno(mesAtual)}` : `Contas fixas de ${nomeVisto}`}>
         <div className="agora-item">
           <span className="rot">Por mês</span>
           <strong className="num grande">{reais(r.total)}</strong>
@@ -123,7 +129,7 @@ export default function Fixas({ brutos, aoMudar }: { brutos: Brutos; aoMudar: ()
           </span>
         </div>
         <div className="agora-item">
-          <span className="rot">Já pago este mês</span>
+          <span className="rot">{noAtual ? "Já pago este mês" : `Já pago em ${nomeVisto}`}</span>
           <strong className="num grande pos">{reais(r.pago)}</strong>
           <div className="medidor" aria-hidden="true">
             <i style={{ width: `${r.total ? Math.min(100, (r.pago / r.total) * 100) : 0}%` }} />
@@ -141,11 +147,11 @@ export default function Fixas({ brutos, aoMudar }: { brutos: Brutos; aoMudar: ()
         </div>
       </div>
 
-      <Painel largo titulo="Suas contas fixas" descricao="Assinaturas e contas que se repetem todo mês. As que têm um texto para achar no banco são marcadas como pagas sozinhas; as pagas no Pix ou em dinheiro, você marca.">
+      <Painel largo titulo={noAtual ? "Suas contas fixas" : `Contas fixas de ${nomeVisto}`} descricao="Assinaturas e contas que se repetem todo mês. As que têm um texto para achar no banco são marcadas como pagas sozinhas; as pagas no Pix ou em dinheiro, você marca.">
         {lista.length ? (
           <ul className="dividas-lista">
             {lista.map((f) => (
-              <ItemFixa key={f.id} f={f} brutos={brutos} mes={mes} diaHoje={diaHoje} aoEditar={() => editar(f)} aoMudar={aoMudar} />
+              <ItemFixa key={f.id} f={f} brutos={brutos} mes={mesVisto} diaHoje={diaVisto} aoEditar={() => editar(f)} aoMudar={aoMudar} />
             ))}
           </ul>
         ) : (
@@ -158,7 +164,7 @@ export default function Fixas({ brutos, aoMudar }: { brutos: Brutos; aoMudar: ()
             </summary>
             <ul className="dividas-lista">
               {canceladas.map((f) => (
-                <ItemFixa key={f.id} f={f} brutos={brutos} mes={mes} diaHoje={diaHoje} aoEditar={() => editar(f)} aoMudar={aoMudar} />
+                <ItemFixa key={f.id} f={f} brutos={brutos} mes={mesVisto} diaHoje={diaVisto} aoEditar={() => editar(f)} aoMudar={aoMudar} />
               ))}
             </ul>
           </details>

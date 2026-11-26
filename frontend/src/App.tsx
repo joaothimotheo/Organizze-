@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, esperandoAcordar, quandoPerderSessao, SemSessao, type MetodosLogin, type Brutos, type Fonte, type FonteDados, type Indicadores, type Movimentacao, type VisaoGeral as Visao } from "./api";
-import { data, definirOcultar, numero } from "./formato";
+import { desativarEste } from "./avisos";
+import { addMes, data, definirOcultar, hojeISO, MESES, numero } from "./formato";
+import { compDe } from "./gastos";
 import { ehEntrada } from "./grupos";
 import { rotaMovimentos } from "./movimentos";
 import { contarPendentes, destinoPendentes, enderecoCanonico, periodoDoLancamento, telaDoEndereco } from "./navegacao";
 import Analises from "./paginas/Analises";
 import Categorias from "./paginas/Categorias";
 import Dividas from "./paginas/Dividas";
+import Fechamento from "./paginas/Fechamento";
 import Enviar, { nomeConta } from "./paginas/Enviar";
 import Gastos from "./paginas/Gastos";
 import Login from "./paginas/Login";
@@ -73,6 +76,14 @@ function temaAtual(): Tema {
 function aplicarTema(t: Tema) {
   document.documentElement.dataset.theme = t;
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", COR_BARRA[t]);
+}
+
+/** Do dia 1 ao 7, avisa no Início que o resumo do mês anterior está pronto (se o mês teve lançamentos). */
+function avisoFechamento(brutos: Brutos): boolean {
+  const hoje = hojeISO();
+  if (Number(hoje.slice(8, 10)) > 7) return false;
+  const mes = addMes(hoje.slice(0, 7), -1);
+  return brutos.movimentacoes.some((m) => compDe(m) === mes);
 }
 
 export default function App() {
@@ -277,6 +288,7 @@ function Painel({ aoSair }: { aoSair: () => void }) {
   }
 
   async function sair() {
+    await Promise.race([desativarEste(true).catch(() => {}), new Promise((r) => setTimeout(r, 2000))]); // no máximo 2s: este aparelho não deve receber avisos de quem saiu
     await api.sair().catch(() => {});
     limparCacheLocal();
     aoSair();
@@ -329,6 +341,7 @@ function Painel({ aoSair }: { aoSair: () => void }) {
   const pendentes = brutos ? contarPendentes(brutos.movimentacoes, anoVisto, mesVisto) : 0;
   const contas = (brutos?.contas ?? []).map((c) => ({ id: c.id, nome: nomeConta(c) }));
   // "#movimentos/<id>/mes-a-mes" abre a análise mês a mês (página Gastos); o resto é a tela Movimentos.
+  const mostrarAvisoFechamento = tela === "inicio" && brutos ? avisoFechamento(brutos) : false;
   const mesAMes = tela === "movimentos" ? decodificar(rotaMovimentos(endereco.detalhe ?? "", []).mesAMes) : null;
 
   return (
@@ -376,6 +389,14 @@ function Painel({ aoSair }: { aoSair: () => void }) {
               </a>
             </div>
           )}
+          {tela === "inicio" && mostrarAvisoFechamento && (
+            <div className="row">
+              <a className="chip aviso-categorias" href={`#fechamento/${addMes(hojeISO().slice(0, 7), -1)}`}>
+                <span className="dot ok" />
+                O resumo de {MESES[Number(addMes(hojeISO().slice(0, 7), -1).slice(5)) - 1]} está pronto
+              </a>
+            </div>
+          )}
           {tela === "inicio" && !comBanco && (
             <div className="row">
               <span className="chip">
@@ -389,11 +410,12 @@ function Painel({ aoSair }: { aoSair: () => void }) {
           {tela === "inicio" && visao && brutos && !simples && comBanco && <VisaoGeral visao={visao} brutos={brutos} aoMudar={carregar} />}
           {tela === "inicio" && visao && !simples && !comBanco && <VisaoGeralAntiga visao={visao} />}
           {tela === "salarios" && brutos && <Salarios brutos={brutos} ano={anoVisto} mes={mesVisto} />}
-          {tela === "dividas" && brutos && <Dividas brutos={brutos} aoMudar={carregar} />}
+          {tela === "dividas" && brutos && <Dividas brutos={brutos} aoMudar={carregar} ano={anoVisto} mes={mesVisto} />}
           {tela === "pessoas" && brutos && <Pessoas brutos={brutos} aoMudar={carregar} />}
           {tela === "objetivos" && brutos && <Objetivos brutos={brutos} aoMudar={carregar} />}
+          {tela === "fechamento" && brutos && <Fechamento brutos={brutos} detalhe={endereco.detalhe} />}
           {tela === "analises" && brutos && visao && <Analises brutos={brutos} visao={visao} ano={anoVisto} mes={mesVisto} />}
-          {tela === "fixas" && brutos && <Fixas brutos={brutos} aoMudar={carregar} />}
+          {tela === "fixas" && brutos && <Fixas brutos={brutos} aoMudar={carregar} ano={anoVisto} mes={mesVisto} />}
           {tela === "movimentos" && brutos && mesAMes !== null && <Gastos brutos={brutos} aoMudar={carregar} categoria={mesAMes} />}
           {tela === "movimentos" && brutos && mesAMes === null && (
             <Movimentos brutos={brutos} ano={anoVisto} mes={mesVisto} endereco={decodificar(endereco.detalhe) ?? ""} aoMudar={carregar} avisar={avisar} />

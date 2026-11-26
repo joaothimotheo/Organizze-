@@ -2,6 +2,9 @@ import type { Brutos, CategoriaInfo, Divida, Fixa, Grupo, Holerite, Movimentacao
 import {
   acimaDaMedia,
   faturaCartao,
+  faturaDoMes,
+  faturasDoBanco,
+  melhorDiaDeCompra,
   fechamento,
   fraseAcima,
   fraseCartao,
@@ -560,6 +563,79 @@ igual(mesesDaBarra(2026, null).length, 12, "meses da barra: o ano");
 definirOcultar(true);
 igual(fraseFechamento(f), "Sim. Deve sobrar cerca de R$ ••••• em 30/11.", "frase com valores escondidos");
 definirOcultar(false);
+
+// ---------- Início: fatura do mês (só a competência pedida, não o limite usado) ----------
+
+{
+  const cc = (id: string, data: string, valor: number, comp: string, extra: Partial<Movimentacao> = {}) =>
+    mov(id, data, valor, { conta_id: "cc", competencia: comp, ...extra });
+  const b = brutos({
+    contas: [
+      { id: "c1", tipo: "corrente", apelido: "Conta" },
+      { id: "cc", tipo: "cartao", apelido: "Cartão" },
+      { id: "cc2", tipo: "cartao", apelido: "Nubank" },
+    ] as Brutos["contas"],
+    movimentacoes: [
+      cc("f1", "2026-11-02", -200, "2026-11"),
+      cc("f2", "2026-11-05", -50, "2026-11", { status: "pendente" }),
+      cc("f3", "2026-11-06", 30, "2026-11", { natureza: "estorno" }),
+      // Parcela de fatura futura e pagamento da fatura: fora.
+      cc("f4", "2026-11-07", -100, "2026-12", { parcela: "02/05" }),
+      cc("f5", "2026-11-08", 500, "2026-11", { natureza: "transferencia" }),
+      mov("f6", "2026-11-09", -70, { conta_id: "cc2", competencia: "2026-11" }),
+      // Pendente que o banco deixou na fatura anterior (já paga): entra na atual. Confirmada antiga: fora.
+      cc("f8", "2026-10-30", -40, "2026-10", { status: "pendente", parcela: "02/03" }),
+      cc("f9", "2026-10-20", -300, "2026-10"),
+      // Conta corrente: não é cartão.
+      mov("f7", "2026-11-09", -999, { competencia: "2026-11" }),
+    ],
+  });
+  const f = faturaDoMes(b, "2026-11")!;
+  igual(f.total, 330, "fatura do mês: gastos menos estornos, competência do mês e pendentes antigas");
+  igual(f.cartoes, [{ conta: "cc", nome: "Cartão", total: 260 }, { conta: "cc2", nome: "Nubank", total: 70 }], "fatura do mês por cartão");
+  igual(f.pendentes, 90, "fatura do mês: compras pendentes");
+  igual(faturaDoMes(b, "2026-08"), null, "sem lançamentos no mês: sem fatura");
+}
+
+// ---------- Início: faturas fechadas pelo banco ----------
+
+{
+  const faturas = [
+    { fechamento: "2026-10-30", vencimento: "2026-11-07", total: 2095.91, minimo: 209.59 },
+    { fechamento: "2026-09-30", vencimento: "2026-10-07", total: 1890.73, minimo: 221.1 },
+  ];
+  const movs = [
+    mov("pg", "2026-11-06", 2095.91, { conta_id: "cc", competencia: "2026-11", natureza: "transferencia_interna" }),
+    mov("x1", "2026-10-10", -2000, { conta_id: "cc", competencia: "2026-10" }),
+    mov("x2", "2026-10-30", -379.24, { conta_id: "cc", competencia: "2026-10", status: "pendente" }),
+  ];
+  const r = faturasDoBanco(faturas, movs, "cc", "2026-11-23")!;
+  igual(r.proximoFechamento, "2026-11-30", "próximo fechamento: mesmo dia, um mês depois");
+  igual(r.ultima, { vencimento: "2026-11-07", total: 2095.91, paga: true, lancamentos: 2379.24 }, "última fatura fechada, paga, com a soma dos lançamentos");
+  const semPagar = faturasDoBanco(faturas, movs.slice(1), "cc", "2026-11-03")!;
+  igual(semPagar.ultima.paga, false, "fatura fechada sem pagamento");
+  // Fechou em 31/01: fevereiro não tem 31.
+  igual(faturasDoBanco([{ fechamento: "2027-01-31", vencimento: "2027-02-07", total: 10, minimo: null }], [], "cc", "2027-02-01")!.proximoFechamento, "2027-02-28", "fechamento no dia 31 vira o último dia do mês");
+  igual(faturasDoBanco([], movs, "cc", "2026-11-23"), null, "sem faturas do banco");
+  igual(faturasDoBanco([{ fechamento: "2026-10-27", vencimento: "2026-11-10", total: -175.69, minimo: 0 }], [], "cc", "2026-11-23")!.ultima.paga, true, "crédito a favor: nada a pagar");
+}
+
+// ---------- Melhor dia de compra ----------
+
+igual(
+  melhorDiaDeCompra("2026-11-30", "2026-12-07", "2026-11-23"),
+  { dia: "2026-12-01", venceAtual: "2026-12-07", vence: "2027-01-07", agora: false },
+  "melhor dia: o seguinte ao fechamento, compra vence no mês depois",
+);
+igual(
+  // Em 01/11 o banco ainda informa o vencimento da fatura fechada (07/11): o que comprar agora vence em 07/12.
+  melhorDiaDeCompra("2026-11-30", "2026-11-07", "2026-11-01"),
+  { dia: "2026-12-01", venceAtual: "2026-12-07", vence: "2027-01-07", agora: true },
+  "logo depois do fechamento anterior (até 10 dias): é a melhor época agora",
+);
+igual(melhorDiaDeCompra("2026-11-30", "2026-12-07", "2026-11-11").agora, false, "11 dias depois do fechamento anterior já não é a melhor época");
+igual(melhorDiaDeCompra(null, "2026-12-07", "2026-11-23"), null, "sem fechamento, sem melhor dia");
+igual(melhorDiaDeCompra("2027-01-31", "2027-02-07", "2027-01-20")?.dia, "2027-02-01", "fechamento no último dia do mês");
 
 if (falhas) {
   console.error(`${falhas} teste(s) falharam`);

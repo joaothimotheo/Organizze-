@@ -7,7 +7,7 @@ import ModoRapido from "../componentes/ModoRapido";
 import { tituloDe } from "../componentes/NomeLancamento";
 import { data, nomeCategoria, reais } from "../formato";
 import { ehEntrada, naoConta, nomeNatureza, semCategoria } from "../grupos";
-import { doPeriodo, filaRapida, filtrar, FILTRO_VAZIO, partesDe, pendente, porDia, resumo, rotaMovimentos, type Aba, type Filtro } from "../movimentos";
+import { doPeriodo, filaRapida, filtrar, FILTRO_VAZIO, origemDe, partesDe, pendente, porDia, resumo, rotaMovimentos, type Aba, type Filtro, type Origem } from "../movimentos";
 import { nomeConta } from "./Enviar";
 import { linkMesAMes } from "./Gastos";
 
@@ -67,6 +67,7 @@ export default function Movimentos({
 
   const [busca, setBusca] = useState("");
   const [conta, setConta] = useState<string | null>(null);
+  const [origemEscolhida, setOrigem] = useState<string | null>(null);
   const [valorMin, setValorMin] = useState<Filtro["valorMin"]>(0);
   const [filtrosAbertos, setFiltrosAbertos] = useState(false);
   const [soPendentes, setSoPendentes] = useState(!!rota.soPendentes);
@@ -98,7 +99,27 @@ export default function Movimentos({
   const listaDaAba = daAba(aba);
   // Inclui os divididos com parte sem grupo, que ficam fora da fila do modo rápido.
   const nPendentes = pendentesPorAba[aba];
-  const dias = porDia(filtrar(doMes, { aba, busca, conta, valorMin, grupo, soPendentes }, nomeDaConta));
+  const origemDoLancamento = (m: Movimentacao) => origemDe(m.conta_id, brutos.contas, nomeConta);
+  // Atalhos por origem: só as que aparecem nos lançamentos do período, na ordem crédito, débito, reserva, dinheiro, outra.
+  const atalhosOrigem = useMemo(() => {
+    const achadas = new Map<string, { origem: Origem; contaId: string | null | undefined }>();
+    for (const m of doMes) {
+      const o = origemDe(m.conta_id, brutos.contas, nomeConta);
+      if (!achadas.has(o.chave)) achadas.set(o.chave, { origem: o, contaId: m.conta_id });
+    }
+    const ordem = ["credito", "debito", "reserva", "dinheiro", "outra"];
+    const lista = [...achadas.values()].sort((a, b) => ordem.indexOf(a.origem.tipo) - ordem.indexOf(b.origem.tipo) || a.origem.rotulo.localeCompare(b.origem.rotulo, "pt-BR"));
+    // Dois botões com o mesmo texto (cartões sem banco, por exemplo): o final da conta desfaz a dúvida.
+    return lista.map(({ origem: o, contaId }) => {
+      const repetido = lista.filter((x) => x.origem.rotulo === o.rotulo).length > 1;
+      const final = brutos.contas.find((c) => c.id === contaId)?.final;
+      return { origem: o, texto: repetido && final ? `${o.rotulo} ··${final}` : o.rotulo };
+    });
+  }, [doMes, brutos.contas]);
+  // Mudou o mês e a origem escolhida não existe mais: vale "Todos" (sem lista vazia sem saída).
+  const origem = atalhosOrigem.some((a) => a.origem.chave === origemEscolhida) ? origemEscolhida : null;
+  const filtradas = filtrar(doMes, { aba, busca, conta, valorMin, grupo, soPendentes }, nomeDaConta);
+  const dias = porDia(origem ? filtradas.filter((m) => origemDoLancamento(m).chave === origem) : filtradas);
   const chips = aba === "tudo" ? [] : resumo(doMes, grupos, aba === "entradas" ? "entrada" : "gasto");
   const fila = filaRapida(listaDaAba);
 
@@ -193,13 +214,19 @@ export default function Movimentos({
 
   function linha(m: Movimentacao) {
     const entrada = ehEntrada(m);
-    const conta = nomeDaConta(m.conta_id);
-    const sub = [conta, m.nome ? m.descricao : null, m.parcela ? `parcela ${m.parcela.replace(/^0/, "").replace("/0", "/")}` : null].filter(Boolean).join(" · ");
+    const o = origemDoLancamento(m);
+    const sub = [m.nome ? m.descricao : null, m.parcela ? `parcela ${m.parcela.replace(/^0/, "").replace("/0", "/")}` : null].filter(Boolean).join(" · ");
     return (
       <div key={m.id} className={"mv-linha" + (naoConta(m) ? " muted" : "")}>
         <button type="button" className="mv-abrir" onClick={() => abrir(m)} title="Abrir detalhes">
           <b>{tituloDe(m)}</b>
-          <small>{sub}</small>
+          <small className="mv-sub">
+            <span className={`mv-origem mv-origem--${o.tipo}`} title={o.completo}>
+              {o.rotulo}
+              <span className="sr-only"> ({o.completo})</span>
+            </span>
+            {sub && <span className="mv-sub-txt">{sub}</span>}
+          </small>
         </button>
         <div className="mv-cat">
           {pilulas(m)}
@@ -258,6 +285,19 @@ export default function Movimentos({
           Filtros{nFiltros ? ` (${nFiltros})` : ""}
         </button>
       </div>
+
+      {atalhosOrigem.length > 0 && (
+        <div className="mv-atalhos" role="group" aria-label="Origem">
+          <button type="button" aria-pressed={origem === null} onClick={() => setOrigem(null)}>
+            Todos
+          </button>
+          {atalhosOrigem.map(({ origem: o, texto }) => (
+            <button key={o.chave} type="button" aria-pressed={origem === o.chave} title={o.completo} aria-label={o.completo === texto ? texto : `${texto}, ${o.completo}`} onClick={() => setOrigem(origem === o.chave ? null : o.chave)}>
+              {texto}
+            </button>
+          ))}
+        </div>
+      )}
 
       {filtrosAbertos && (
         <div className="panel mv-filtros">

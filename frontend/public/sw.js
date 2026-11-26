@@ -49,3 +49,41 @@ self.addEventListener("fetch", (e) => {
   // Arquivos com hash no nome não mudam: cache primeiro.
   e.respondWith(caches.match(req).then((r) => r || fetch(req)));
 });
+
+// Avisos: o servidor manda { tipo, titulo, texto, link } já decifrado pelo navegador.
+self.addEventListener("push", (e) => {
+  let d = {};
+  try {
+    d = e.data ? e.data.json() : {};
+  } catch {
+    d = {};
+  }
+  const titulo = d.titulo || "Financeiro";
+  e.waitUntil(
+    self.registration.showNotification(titulo, {
+      body: d.texto || "",
+      icon: "/icone-192.png",
+      badge: "/icone-192.png",
+      tag: d.tipo || "aviso",
+      renotify: true,
+      data: { link: typeof d.link === "string" && d.link.startsWith("#") ? d.link : "" },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const link = (e.notification.data && e.notification.data.link) || "";
+  const destino = "/" + link;
+  e.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (janelas) => {
+      const aberta = janelas.find((j) => new URL(j.url).origin === self.location.origin);
+      if (aberta) {
+        await aberta.focus();
+        if ("navigate" in aberta) return aberta.navigate(destino).catch(() => self.clients.openWindow(destino));
+        return undefined;
+      }
+      return self.clients.openWindow(destino);
+    }),
+  );
+});
